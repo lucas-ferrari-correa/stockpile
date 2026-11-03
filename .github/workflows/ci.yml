@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: stockpile
+          POSTGRES_PASSWORD: stockpile
+          POSTGRES_DB: stockpile
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stockpile -d stockpile"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://stockpile:stockpile@localhost:5432/stockpile
+      REDIS_URL: redis://localhost:6379
+      PORT: 3000
+      LOG_LEVEL: warn
+      EXCHANGE_CURRENCIES: EUR,GBP,JPY,CNY,CAD,BRL,COP
+      VITE_API_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @stockpile/api exec prisma generate
+      - run: pnpm build
+      - run: pnpm --filter @stockpile/api exec prisma migrate deploy
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test

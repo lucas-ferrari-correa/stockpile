@@ -1,0 +1,20 @@
+{
+  "name": "stockpile",
+  "private": true,
+  "packageManager": "pnpm@10.17.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm --filter \"./packages/*\" build && pnpm -r --if-present typecheck",
+    "infra:up": "docker compose up -d --wait",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v && docker compose up -d --wait && pnpm --filter @stockpile/api prisma:deploy"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3"
+  }
+}

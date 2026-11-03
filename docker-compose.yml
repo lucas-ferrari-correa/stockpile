@@ -1,0 +1,83 @@
+name: stockpile
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stockpile}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockpile}
+      POSTGRES_DB: ${POSTGRES_DB:-stockpile}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockpile}:${POSTGRES_PASSWORD:-stockpile}@postgres:5432/${POSTGRES_DB:-stockpile}
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      EXCHANGE_CURRENCIES: ${EXCHANGE_CURRENCIES:-EUR,GBP,JPY,CNY,CAD,BRL,COP}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      - uploads:/app/apps/api/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: worker
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockpile}:${POSTGRES_PASSWORD:-stockpile}@postgres:5432/${POSTGRES_DB:-stockpile}
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      EXCHANGE_CURRENCIES: ${EXCHANGE_CURRENCIES:-EUR,GBP,JPY,CNY,CAD,BRL,COP}
+    volumes:
+      - uploads:/app/apps/api/uploads
+    depends_on:
+      api:
+        condition: service_started
+
+  web:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  uploads:
