@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ImportStatus {
+  pending
+  processing
+  completed
+  failed
+
+  @@map("import_status")
+}
+
+model Import {
+  id            String                @id @default(uuid()) @db.Uuid
+  status        ImportStatus          @default(pending)
+  fileName      String                @map("file_name")
+  totalRows     Int?                  @map("total_rows")
+  processedRows Int                   @default(0) @map("processed_rows")
+  acceptedRows  Int                   @default(0) @map("accepted_rows")
+  rejectedRows  Int                   @default(0) @map("rejected_rows")
+  failureReason String?               @map("failure_reason")
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  rateSnapshot  ExchangeRateSnapshot?
+  stockItems    StockItem[]
+  errors        ImportError[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("imports")
+}
+
+model ExchangeRateSnapshot {
+  id        String   @id @default(uuid()) @db.Uuid
+  importId  String   @unique @map("import_id") @db.Uuid
+  base      String
+  rateDate  DateTime @map("rate_date") @db.Date
+  fetchedAt DateTime @map("fetched_at") @db.Timestamptz(3)
+  source    String
+  rates     Json     @db.JsonB
+  import    Import   @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@map("exchange_rate_snapshots")
+}
+
+model StockItem {
+  id             Int       @id @default(autoincrement())
+  importId       String    @map("import_id") @db.Uuid
+  sku            String
+  name           String
+  category       String
+  brand          String?
+  supplier       String
+  country        String
+  warehouse      String
+  lot            String
+  quantity       Int
+  unitCostCents  Int       @map("unit_cost_cents")
+  unitPriceCents Int       @map("unit_price_cents")
+  expiration     DateTime? @db.Date
+  import         Import    @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([sku, warehouse, lot])
+  @@index([importId])
+  @@map("stock_items")
+}
+
+model ImportError {
+  id       Int     @id @default(autoincrement())
+  importId String  @map("import_id") @db.Uuid
+  line     Int
+  field    String?
+  code     String
+  message  String
+  raw      String
+  import   Import  @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId, line])
+  @@map("import_errors")
+}
