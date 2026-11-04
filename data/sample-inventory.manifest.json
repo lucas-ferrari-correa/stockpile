@@ -1,0 +1,23 @@
+{
+  "seed": 20260101,
+  "rows": 2000,
+  "total": 2000,
+  "dirtyRatio": 0.05,
+  "repeatIdentityRatio": 0.1,
+  "accepted": 1900,
+  "rejected": 100,
+  "rejectedByReason": {
+    "COLUMN_COUNT": 12,
+    "MALFORMED_ROW": 11,
+    "MISSING_FIELD": 11,
+    "INVALID_MONEY": 11,
+    "INVALID_QUANTITY": 11,
+    "INVALID_COUNTRY": 11,
+    "INVALID_DATE": 11,
+    "INVALID_CHARACTER": 11,
+    "INVALID_LENGTH": 11
+  },
+  "distinctIdentities": 1735,
+  "expectedCreated": 1735,
+  "expectedUpdated": 165
+}
