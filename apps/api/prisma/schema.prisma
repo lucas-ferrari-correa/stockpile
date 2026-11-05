@@ -26,6 +26,17 @@ enum UserStatus {
   @@map("user_status")
 }
 
+enum UserEventType {
+  REQUESTED
+  APPROVED
+  REJECTED
+  BLOCKED
+  DELETED
+  ROLE_CHANGED
+
+  @@map("user_event_type")
+}
+
 model Role {
   id          String           @id @default(uuid()) @db.Uuid
   name        String           @unique
@@ -48,19 +59,35 @@ model RolePermission {
 }
 
 model User {
-  id           String     @id @default(uuid()) @db.Uuid
+  id           String      @id @default(uuid()) @db.Uuid
   name         String
-  email        String     @unique
-  passwordHash String     @map("password_hash")
-  roleId       String?    @map("role_id") @db.Uuid
-  status       UserStatus @default(PENDING)
-  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(3)
-  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
-  role         Role?      @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  email        String      @unique
+  passwordHash String      @map("password_hash")
+  roleId       String?     @map("role_id") @db.Uuid
+  status       UserStatus  @default(PENDING)
+  deletedAt    DateTime?   @map("deleted_at") @db.Timestamptz(3)
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  role         Role?       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  events       UserEvent[] @relation("UserEventSubject")
+  actedEvents  UserEvent[] @relation("UserEventActor")
 
   @@index([roleId])
   @@map("users")
+}
+
+model UserEvent {
+  id             String        @id @default(uuid()) @db.Uuid
+  userId         String        @map("user_id") @db.Uuid
+  actorId        String?       @map("actor_id") @db.Uuid
+  type           UserEventType
+  reRegistration Boolean       @default(false) @map("re_registration")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  user           User          @relation("UserEventSubject", fields: [userId], references: [id], onDelete: Cascade)
+  actor          User?         @relation("UserEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("user_events")
 }
 
 model Import {

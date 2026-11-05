@@ -64,6 +64,7 @@ export const authErrorCodeSchema = z.enum([
   'INVALID_CREDENTIALS',
   'ACCOUNT_PENDING',
   'ACCOUNT_BLOCKED',
+  'ACCOUNT_UNAVAILABLE',
   'ACCESS_DENIED',
 ]);
 

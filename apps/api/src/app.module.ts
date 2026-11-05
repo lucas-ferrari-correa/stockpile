@@ -7,6 +7,7 @@ import { PrismaModule } from './infra/prisma/prisma.module';
 import { RedisModule } from './infra/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { HealthModule } from './modules/health/health.module';
     RedisModule,
     AuthModule,
     HealthModule,
+    UsersModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },
