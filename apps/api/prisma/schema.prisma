@@ -16,6 +16,53 @@ enum ImportStatus {
   @@map("import_status")
 }
 
+enum UserStatus {
+  PENDING
+  ACTIVE
+  BLOCKED
+  REJECTED
+  DELETED
+
+  @@map("user_status")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique
+  system      Boolean          @default(false)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId     String @map("role_id") @db.Uuid
+  permission String
+  role       Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permission])
+  @@map("role_permissions")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  name         String
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  roleId       String?    @map("role_id") @db.Uuid
+  status       UserStatus @default(PENDING)
+  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(3)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  role         Role?      @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@index([roleId])
+  @@map("users")
+}
+
 model Import {
   id            String                @id @default(uuid()) @db.Uuid
   status        ImportStatus          @default(pending)

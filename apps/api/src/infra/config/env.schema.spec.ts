@@ -3,6 +3,7 @@ import { parseEnv } from './env.schema';
 const validEnv = {
   DATABASE_URL: 'postgresql://stockpile:stockpile@localhost:5433/stockpile',
   REDIS_URL: 'redis://localhost:6379',
+  JWT_SECRET: 'test-only-jwt-secret-with-at-least-32-chars',
 };
 
 describe('parseEnv', () => {

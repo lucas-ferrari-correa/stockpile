@@ -27,6 +27,22 @@ services:
       timeout: 3s
       retries: 20
 
+  db-setup:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: db-setup
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockpile}:${POSTGRES_PASSWORD:-stockpile}@postgres:5432/${POSTGRES_DB:-stockpile}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@stockpile.local}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrator}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     profiles: [app]
     build:
@@ -39,13 +55,15 @@ services:
       PORT: 3000
       LOG_LEVEL: ${LOG_LEVEL:-info}
       EXCHANGE_CURRENCIES: ${EXCHANGE_CURRENCIES:-EUR,GBP,JPY,CNY,CAD,BRL,COP}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-jwt-secret-change-me-0123456789}
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
     ports:
       - "${API_PORT:-3000}:3000"
     volumes:
       - uploads:/app/apps/api/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -60,11 +78,14 @@ services:
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}
       EXCHANGE_CURRENCIES: ${EXCHANGE_CURRENCIES:-EUR,GBP,JPY,CNY,CAD,BRL,COP}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-jwt-secret-change-me-0123456789}
     volumes:
       - uploads:/app/apps/api/uploads
     depends_on:
-      api:
-        condition: service_started
+      db-setup:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   web:
     profiles: [app]

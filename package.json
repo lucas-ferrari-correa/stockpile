@@ -12,7 +12,7 @@
     "typecheck": "pnpm --filter \"./packages/*\" build && pnpm -r --if-present typecheck && tsc -p tsconfig.json",
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down",
-    "infra:reset": "docker compose down -v && docker compose up -d --wait && pnpm --filter @stockpile/api prisma:deploy",
+    "infra:reset": "docker compose down -v && docker compose up -d --wait && pnpm --filter @stockpile/api prisma:deploy && pnpm --filter @stockpile/api prisma:seed",
     "dataset:generate": "tsx scripts/generate-dataset.ts",
     "dataset:sample": "tsx scripts/generate-dataset.ts --rows 2000 --seed 20260101 --dirty-ratio 0.05 --repeat-identity-ratio 0.1 --out data/sample-inventory.csv"
   },

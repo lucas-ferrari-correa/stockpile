@@ -5,6 +5,7 @@ import { AppConfigModule } from './infra/config/config.module';
 import { LoggerModule } from './infra/logger/logger.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
 import { RedisModule } from './infra/redis/redis.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
 
 @Module({
@@ -13,7 +14,8 @@ import { HealthModule } from './modules/health/health.module';
     LoggerModule,
     PrismaModule,
     RedisModule,
-    HealthModule
+    AuthModule,
+    HealthModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

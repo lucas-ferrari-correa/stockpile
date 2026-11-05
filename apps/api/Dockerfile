@@ -20,7 +20,10 @@ WORKDIR /app/apps/api
 
 FROM runtime AS api
 EXPOSE 3000
-CMD ["sh", "-c", "pnpm exec prisma migrate deploy && exec node dist/main.js"]
+CMD ["node", "dist/main.js"]
 
 FROM runtime AS worker
 CMD ["node", "dist/worker.js"]
+
+FROM runtime AS db-setup
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && exec node dist/seed.js"]

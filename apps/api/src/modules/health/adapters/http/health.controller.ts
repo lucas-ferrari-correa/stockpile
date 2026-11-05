@@ -2,9 +2,11 @@ import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { ApiOperation, ApiServiceUnavailableResponse, ApiTags } from '@nestjs/swagger';
 import { HealthStatus } from '@stockpile/shared';
 import { ZodResponse } from 'nestjs-zod';
+import { Public } from '../../../auth/adapters/http/auth.decorators';
 import { HealthService } from '../../application/health.service';
 import { HealthStatusDto } from './health.dto';
 
+@Public()
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
