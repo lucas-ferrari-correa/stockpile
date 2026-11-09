@@ -62,6 +62,9 @@ importers:
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
+      big.js:
+        specifier: 7.0.1
+        version: 7.0.1
       ioredis:
         specifier: ^5.11.1
         version: 5.11.1
@@ -96,6 +99,9 @@ importers:
       '@nestjs/testing':
         specifier: ^11.2.8
         version: 11.2.8(@nestjs/common@11.2.8(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.8)(@nestjs/platform-express@11.2.8)
+      '@types/big.js':
+        specifier: 7.0.0
+        version: 7.0.0
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
@@ -1772,6 +1778,9 @@ packages:
   '@types/babel__traverse@7.28.0':
     resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
 
+  '@types/big.js@7.0.0':
+    resolution: {integrity: sha512-WfAGp7IbJvyB8EmWK4tJD24rJRAL6uVbw3LV/hJntFNam+os9KWKj0PzXo8rRRpjupYK8U0M8FoBB8dBhWF2dg==}
+
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
 
@@ -2296,6 +2305,9 @@ packages:
 
   big-list-of-naughty-strings@1.0.0:
     resolution: {integrity: sha512-WiC+gW38KhSqHR5nmQ51l25CkiU/WkDCXFXd6R1uvyCdYrMk70IzmcVrrV3CEKU1ppd2PcZY+UsRz/RyM7/jMA==}
+
+  big.js@7.0.1:
+    resolution: {integrity: sha512-iFgV784tD8kq4ccF1xtNMZnXeZzVuXWWM+ERFzKQjv+A5G9HC8CY3DuV45vgzFFcW+u2tIvmF95+AzWgs6BjCg==}
 
   bl@4.1.0:
     resolution: {integrity: sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==}
@@ -6327,6 +6339,8 @@ snapshots:
     dependencies:
       '@babel/types': 7.29.11
 
+  '@types/big.js@7.0.0': {}
+
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
@@ -6913,6 +6927,8 @@ snapshots:
   bcryptjs@3.0.3: {}
 
   big-list-of-naughty-strings@1.0.0: {}
+
+  big.js@7.0.1: {}
 
   bl@4.1.0:
     dependencies:

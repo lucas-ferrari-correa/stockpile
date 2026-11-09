@@ -12,6 +12,7 @@ export const envSchema = z.object({
   REDIS_URL: z.url(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   EXCHANGE_CURRENCIES: currencyListSchema.default([...DEFAULT_CONVERSION_CURRENCIES]),
+  EXCHANGE_RATES_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
   JWT_SECRET: z.string().min(MIN_JWT_SECRET_LENGTH),
   JWT_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(DEFAULT_JWT_EXPIRES_IN_SECONDS),
 });

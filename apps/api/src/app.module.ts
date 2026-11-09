@@ -6,6 +6,7 @@ import { LoggerModule } from './infra/logger/logger.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
 import { RedisModule } from './infra/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
 import { HealthModule } from './modules/health/health.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { UsersModule } from './modules/users/users.module';
@@ -17,6 +18,7 @@ import { UsersModule } from './modules/users/users.module';
     PrismaModule,
     RedisModule,
     AuthModule,
+    ExchangeRatesModule,
     HealthModule,
     RolesModule,
     UsersModule,
