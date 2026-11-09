@@ -1,4 +1,5 @@
 import { Permission, UserStatus } from '@stockpile/shared';
+import { holdsGovernance } from '../../auth/domain/permissions';
 
 export type UserAction = 'approve' | 'reject' | 'block' | 'unblock' | 'delete' | 'changeRole';
 
@@ -21,8 +22,6 @@ export const USER_TRANSITIONS: Readonly<Record<UserAction, UserTransition>> = {
   delete: { from: ['PENDING', 'ACTIVE', 'BLOCKED', 'REJECTED'], to: 'DELETED', event: 'DELETED', deletedAt: 'set' },
   changeRole: { from: ['ACTIVE', 'BLOCKED'], to: 'unchanged', event: 'ROLE_CHANGED', deletedAt: 'keep' },
 };
-
-export const GOVERNANCE_PERMISSIONS: readonly Permission[] = ['users:manage', 'roles:manage'];
 
 export class InvalidUserTransitionError extends Error {
   constructor(
@@ -53,10 +52,6 @@ export function transitionFor(action: UserAction, from: UserStatus): UserTransit
     throw new InvalidUserTransitionError(action, from);
   }
   return transition;
-}
-
-export function holdsGovernance(permissions: readonly Permission[]): boolean {
-  return GOVERNANCE_PERMISSIONS.every((permission) => permissions.includes(permission));
 }
 
 export interface GovernanceSubject {

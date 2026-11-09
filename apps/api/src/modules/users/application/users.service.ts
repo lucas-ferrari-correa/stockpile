@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, UserStatus } from '@prisma/client';
 import { Permission, UserListItem, UserListQuery, UserPage } from '@stockpile/shared';
 import { PrismaService } from '../../../infra/prisma/prisma.service';
+import { runSerializable } from '../../../infra/prisma/serializable';
+import { countActiveGovernors } from '../../auth/application/governance';
 import { toPermissions } from '../../auth/domain/permissions';
 import {
   DeletedAtEffect,
-  GOVERNANCE_PERMISSIONS,
   InvalidUserTransitionError,
   SelfActionError,
   UserAction,
@@ -17,8 +18,6 @@ import {
   transitionFor,
 } from '../domain/user-lifecycle';
 import { invalidCursor, roleNotFound, userConflict, userNotFound } from './users.errors';
-
-const SERIALIZATION_RETRIES = 3;
 
 export type UserCommand =
   | { action: 'approve'; roleId: string }
@@ -61,10 +60,6 @@ function deletedAtUpdate(effect: DeletedAtEffect): { deletedAt?: Date | null } {
 
 function statusUpdate(transition: UserTransition): { status?: UserStatus } {
   return transition.to === 'unchanged' ? {} : { status: transition.to };
-}
-
-function isSerializationFailure(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
 }
 
 @Injectable()
@@ -117,17 +112,7 @@ export class UsersService {
       throw error;
     }
 
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await this.prisma.$transaction((tx) => this.applyWithin(tx, command, targetId, actorId), {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        });
-      } catch (error) {
-        if (!isSerializationFailure(error) || attempt >= SERIALIZATION_RETRIES) {
-          throw error;
-        }
-      }
-    }
+    return runSerializable(this.prisma, (tx) => this.applyWithin(tx, command, targetId, actorId));
   }
 
   private async applyWithin(
@@ -166,16 +151,7 @@ export class UsersService {
         nextRole?.permissions ?? null,
       )
     ) {
-      const otherGovernors = await tx.user.count({
-        where: {
-          id: { not: target.id },
-          status: 'ACTIVE',
-          deletedAt: null,
-          AND: GOVERNANCE_PERMISSIONS.map((permission) => ({
-            role: { permissions: { some: { permission } } },
-          })),
-        },
-      });
+      const otherGovernors = await countActiveGovernors(tx, { id: target.id });
       if (otherGovernors === 0) {
         throw userConflict('LAST_ADMIN_PROTECTED');
       }

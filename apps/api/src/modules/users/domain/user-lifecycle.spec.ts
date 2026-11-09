@@ -9,13 +9,13 @@ import {
   UserEventKind,
   accessRequestOutcome,
   assertNotSelf,
-  holdsGovernance,
   isActiveGovernor,
   isReRegistrationRequest,
   isRoleNoOp,
   removesGovernor,
   transitionFor,
 } from './user-lifecycle';
+import { holdsGovernance } from '../../auth/domain/permissions';
 
 const ACTIONS: readonly UserAction[] = ['approve', 'reject', 'block', 'unblock', 'delete', 'changeRole'];
 const PAST = new Date('2026-01-01T00:00:00.000Z');

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createHttpClient, type FetchLike } from './http';
+import { createHttpClient, type FetchLike, type HttpClient } from './http';
 import { HttpError } from './http-error';
+import { createRole, deleteRole, getRole, listRoles, updateRole } from './roles';
 
 interface RecordedCall {
   url: string;
@@ -102,5 +103,38 @@ describe('createHttpClient', () => {
     const client = createHttpClient({ baseUrl: 'http://api.test', fetch });
 
     await expect(client.request('/items/1', { method: 'DELETE' })).resolves.toBeUndefined();
+  });
+});
+
+describe('roles fetchers', () => {
+  const ROLE_ID = '5b0f8a52-3c0e-4c4f-9d43-2f7a3c1c9e10';
+
+  it.each([
+    ['listRoles', (client: HttpClient) => listRoles(client), 'GET', '/roles', undefined],
+    ['getRole', (client: HttpClient) => getRole(client, ROLE_ID), 'GET', `/roles/${ROLE_ID}`, undefined],
+    [
+      'createRole',
+      (client: HttpClient) => createRole(client, { name: 'Auditor', permissions: ['inventory:read'] }),
+      'POST',
+      '/roles',
+      { name: 'Auditor', permissions: ['inventory:read'] },
+    ],
+    [
+      'updateRole',
+      (client: HttpClient) => updateRole(client, ROLE_ID, { permissions: [] }),
+      'PATCH',
+      `/roles/${ROLE_ID}`,
+      { permissions: [] },
+    ],
+    ['deleteRole', (client: HttpClient) => deleteRole(client, ROLE_ID), 'DELETE', `/roles/${ROLE_ID}`, undefined],
+  ])('%s calls the roles endpoint with the expected method and body', async (_name, call, method, path, body) => {
+    const { fetch, calls } = fakeFetch(() => new Response(null, { status: 204 }));
+    const client = createHttpClient({ baseUrl: 'http://api.test', fetch });
+
+    await call(client);
+
+    expect(calls[0]?.url).toBe(`http://api.test${path}`);
+    expect(calls[0]?.init?.method).toBe(method);
+    expect(calls[0]?.init?.body).toBe(body === undefined ? undefined : JSON.stringify(body));
   });
 });
