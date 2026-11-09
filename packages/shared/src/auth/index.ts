@@ -22,6 +22,14 @@ export type UserStatus = z.infer<typeof userStatusSchema>;
 
 export const emailSchema = z.string().trim().toLowerCase().pipe(z.email());
 
+export const USER_NAME_MAX_LENGTH = 120;
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 72;
+
+export const userNameSchema = z.string().trim().min(1).max(USER_NAME_MAX_LENGTH);
+
+export const newPasswordSchema = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH);
+
 export const loginRequestSchema = z.object({
   email: emailSchema,
   password: z.string().min(1),
@@ -59,6 +67,19 @@ export const meResponseSchema = authUserSchema;
 
 export type MeResponse = z.infer<typeof meResponseSchema>;
 
+export const updateProfileRequestSchema = z.object({
+  name: userNameSchema,
+});
+
+export type UpdateProfileRequest = z.infer<typeof updateProfileRequestSchema>;
+
+export const changePasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: newPasswordSchema,
+});
+
+export type ChangePasswordRequest = z.infer<typeof changePasswordRequestSchema>;
+
 export const authErrorCodeSchema = z.enum([
   'UNAUTHENTICATED',
   'INVALID_CREDENTIALS',
@@ -66,6 +87,7 @@ export const authErrorCodeSchema = z.enum([
   'ACCOUNT_BLOCKED',
   'ACCOUNT_UNAVAILABLE',
   'ACCESS_DENIED',
+  'CURRENT_PASSWORD_INVALID',
 ]);
 
 export type AuthErrorCode = z.infer<typeof authErrorCodeSchema>;

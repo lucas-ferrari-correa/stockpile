@@ -3,11 +3,11 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { z } from 'zod';
 import { unauthorized } from '../../application/auth.errors';
-import { AuthService } from '../../application/auth.service';
+import { AccessTokenPayload, AuthService } from '../../application/auth.service';
 import { IS_PUBLIC_KEY } from './auth.decorators';
 import { AuthenticatedRequest } from './authenticated-request';
 
-const accessTokenPayloadSchema = z.object({ sub: z.uuid() });
+const accessTokenPayloadSchema = z.object({ sub: z.uuid(), sv: z.number().int().min(0) });
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -23,12 +23,12 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const userId = await this.resolveUserId(request.headers.authorization);
-    request.user = await this.auth.resolveActiveUser(userId);
+    const { sub, sv } = await this.resolveTokenPayload(request.headers.authorization);
+    request.user = await this.auth.resolveActiveUser(sub, sv);
     return true;
   }
 
-  private async resolveUserId(header: string | undefined): Promise<string> {
+  private async resolveTokenPayload(header: string | undefined): Promise<AccessTokenPayload> {
     const [scheme, token] = header?.split(' ') ?? [];
     if (scheme?.toLowerCase() !== 'bearer' || !token) {
       throw unauthorized('UNAUTHENTICATED');
@@ -45,6 +45,6 @@ export class JwtAuthGuard implements CanActivate {
     if (!parsed.success) {
       throw unauthorized('UNAUTHENTICATED');
     }
-    return parsed.data.sub;
+    return parsed.data;
   }
 }

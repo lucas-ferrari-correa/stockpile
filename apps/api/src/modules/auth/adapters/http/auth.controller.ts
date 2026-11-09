@@ -1,9 +1,10 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Patch, Post } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiBody,
   ApiForbiddenResponse,
+  ApiNoContentResponse,
   ApiOperation,
   ApiTags,
   ApiUnauthorizedResponse,
@@ -12,7 +13,14 @@ import { AuthUser, LoginResponse } from '@stockpile/shared';
 import { ZodResponse } from 'nestjs-zod';
 import { AuthService } from '../../application/auth.service';
 import { CurrentUser, Public } from './auth.decorators';
-import { AuthErrorDto, LoginRequestDto, LoginResponseDto, MeResponseDto } from './auth.dto';
+import {
+  AuthErrorDto,
+  ChangePasswordRequestDto,
+  LoginRequestDto,
+  LoginResponseDto,
+  MeResponseDto,
+  UpdateProfileRequestDto,
+} from './auth.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -59,5 +67,49 @@ export class AuthController {
   })
   me(@CurrentUser() user: AuthUser): AuthUser {
     return user;
+  }
+
+  @Patch('me')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update the display name of the authenticated user; other fields are ignored' })
+  @ApiBody({ type: UpdateProfileRequestDto, examples: { rename: { value: { name: 'Stock Keeper' } } } })
+  @ZodResponse({ status: 200, description: 'Updated current user', type: MeResponseDto })
+  @ApiBadRequestResponse({ description: 'Name is missing, blank or longer than allowed' })
+  @ApiUnauthorizedResponse({
+    description: 'Missing, invalid or expired token, or the user is no longer active',
+    type: AuthErrorDto.Output,
+    example: { statusCode: 401, code: 'UNAUTHENTICATED', message: 'Authentication is required' },
+  })
+  @ApiForbiddenResponse({
+    description: 'The account was blocked after the token was issued',
+    type: AuthErrorDto.Output,
+    example: { statusCode: 403, code: 'ACCOUNT_BLOCKED', message: 'Your account has been blocked' },
+  })
+  updateProfile(@CurrentUser() user: AuthUser, @Body() body: UpdateProfileRequestDto): Promise<AuthUser> {
+    return this.auth.updateProfile(user, body.name);
+  }
+
+  @Post('me/password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change the password of the authenticated user and revoke previously issued tokens' })
+  @ApiBody({
+    type: ChangePasswordRequestDto,
+    examples: { change: { value: { currentPassword: 'your-password', newPassword: 'a-new-strong-password' } } },
+  })
+  @ApiNoContentResponse({ description: 'Password changed; tokens issued before this request are no longer valid' })
+  @ApiBadRequestResponse({ description: 'Current password missing or new password outside the allowed length' })
+  @ApiUnauthorizedResponse({
+    description: 'Missing, invalid or expired token, or the user is no longer active',
+    type: AuthErrorDto.Output,
+    example: { statusCode: 401, code: 'UNAUTHENTICATED', message: 'Authentication is required' },
+  })
+  @ApiForbiddenResponse({
+    description: 'The current password is incorrect, or the account was blocked after the token was issued',
+    type: AuthErrorDto.Output,
+    example: { statusCode: 403, code: 'CURRENT_PASSWORD_INVALID', message: 'The current password is incorrect' },
+  })
+  async changePassword(@CurrentUser() user: AuthUser, @Body() body: ChangePasswordRequestDto): Promise<void> {
+    await this.auth.changePassword(user.id, body.currentPassword, body.newPassword);
   }
 }

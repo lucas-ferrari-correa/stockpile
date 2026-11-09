@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { authRoleSchema, emailSchema, userStatusSchema } from '../auth';
+import { authRoleSchema, emailSchema, newPasswordSchema, userNameSchema, userStatusSchema } from '../auth';
 
 export const ACCESS_REQUEST_ACCEPTED_MESSAGE =
   'If the request can be accepted, an administrator will review it. You will be able to sign in once it is approved.';
@@ -8,9 +8,9 @@ export const USER_LIST_DEFAULT_LIMIT = 20;
 export const USER_LIST_MAX_LIMIT = 100;
 
 export const accessRequestSchema = z.object({
-  name: z.string().trim().min(1).max(120),
+  name: userNameSchema,
   email: emailSchema,
-  password: z.string().min(8).max(72),
+  password: newPasswordSchema,
 });
 
 export type AccessRequest = z.infer<typeof accessRequestSchema>;

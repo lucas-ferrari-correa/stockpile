@@ -9,6 +9,7 @@ const MESSAGES = {
   ACCOUNT_UNAVAILABLE:
     'This account does not have access. It may have been blocked, rejected or deleted. If it was deleted, a re-registration request has been sent to the administrator.',
   ACCESS_DENIED: 'You do not have permission to access this resource',
+  CURRENT_PASSWORD_INVALID: 'The current password is incorrect',
 } as const satisfies Record<AuthError['code'], string>;
 
 export function unauthorized(code: 'UNAUTHENTICATED' | 'INVALID_CREDENTIALS'): UnauthorizedException {
@@ -17,7 +18,7 @@ export function unauthorized(code: 'UNAUTHENTICATED' | 'INVALID_CREDENTIALS'): U
 }
 
 export function forbidden(
-  code: 'ACCOUNT_PENDING' | 'ACCOUNT_BLOCKED' | 'ACCOUNT_UNAVAILABLE' | 'ACCESS_DENIED',
+  code: 'ACCOUNT_PENDING' | 'ACCOUNT_BLOCKED' | 'ACCOUNT_UNAVAILABLE' | 'ACCESS_DENIED' | 'CURRENT_PASSWORD_INVALID',
 ): ForbiddenException {
   const body: AuthError = { statusCode: HttpStatus.FORBIDDEN, code, message: MESSAGES[code] };
   return new ForbiddenException(body);

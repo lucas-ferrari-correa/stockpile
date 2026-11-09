@@ -22,6 +22,7 @@ interface StoredUser {
   name: string;
   email: string;
   passwordHash: string;
+  sessionVersion: number;
   status: UserStatus;
   deletedAt: Date | null;
   roleId: string | null;
@@ -71,6 +72,7 @@ describe('AuthService', () => {
       name: 'Stock Keeper',
       email: `${randomUUID()}@example.test`,
       passwordHash: `hashed:${PASSWORD}`,
+      sessionVersion: 0,
       status: 'ACTIVE',
       deletedAt: null,
       roleId: role.id,
@@ -111,7 +113,7 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
-    it('issues a bearer token whose subject is the user id for an active user', async () => {
+    it('issues a bearer token whose subject is the user id and carries the session version for an active user', async () => {
       const user = storeUser();
 
       const response = await service.login(user.email, PASSWORD);
@@ -120,6 +122,7 @@ describe('AuthService', () => {
       expect(response.expiresIn).toBe(config.get('JWT_EXPIRES_IN_SECONDS'));
       const payload = await jwt.verifyAsync<AccessTokenPayload>(response.accessToken);
       expect(payload.sub).toBe(user.id);
+      expect(payload.sv).toBe(user.sessionVersion);
     });
 
     it('answers a wrong password and an unknown email with the same invalid credentials error', async () => {
@@ -206,7 +209,7 @@ describe('AuthService', () => {
       };
       const user = storeUser({ roleId: role.id, role });
 
-      await expect(service.resolveActiveUser(user.id)).resolves.toEqual({
+      await expect(service.resolveActiveUser(user.id, user.sessionVersion)).resolves.toEqual({
         id: user.id,
         name: user.name,
         email: user.email,
@@ -219,7 +222,7 @@ describe('AuthService', () => {
     it('denies a blocked user with 403 account blocked', async () => {
       const user = storeUser({ status: 'BLOCKED' });
 
-      const result = await failure(service.resolveActiveUser(user.id));
+      const result = await failure(service.resolveActiveUser(user.id, user.sessionVersion));
 
       expect(result).toEqual({
         status: 403,
@@ -236,14 +239,23 @@ describe('AuthService', () => {
     ])('denies a %s user with 401 unauthenticated', async (_label, overrides) => {
       const user = storeUser(overrides);
 
-      const result = await failure(service.resolveActiveUser(user.id));
+      const result = await failure(service.resolveActiveUser(user.id, user.sessionVersion));
+
+      expect(result.status).toBe(401);
+      expect(result.body.code).toBe('UNAUTHENTICATED');
+    });
+
+    it('denies a token whose session version no longer matches the user with 401 unauthenticated', async () => {
+      const user = storeUser({ sessionVersion: 1 });
+
+      const result = await failure(service.resolveActiveUser(user.id, 0));
 
       expect(result.status).toBe(401);
       expect(result.body.code).toBe('UNAUTHENTICATED');
     });
 
     it('denies a token subject that no longer exists with 401 unauthenticated', async () => {
-      const result = await failure(service.resolveActiveUser(randomUUID()));
+      const result = await failure(service.resolveActiveUser(randomUUID(), 0));
 
       expect(result.status).toBe(401);
       expect(result.body.code).toBe('UNAUTHENTICATED');
