@@ -4,6 +4,7 @@ import { AccessRequestResponse } from '@stockpile/shared';
 import { ZodResponse } from 'nestjs-zod';
 import { Public } from '../../../auth/adapters/http/auth.decorators';
 import { AuthErrorDto } from '../../../auth/adapters/http/auth.dto';
+import { RateLimit } from '../../../auth/adapters/http/rate-limit.decorator';
 import { AccessRequestsService } from '../../application/access-requests.service';
 import { AccessRequestDto, AccessRequestResponseDto } from './users.dto';
 
@@ -13,6 +14,7 @@ export class AccessRequestsController {
   constructor(private readonly accessRequests: AccessRequestsService) {}
 
   @Public()
+  @RateLimit('access-request')
   @Post('access-requests')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({

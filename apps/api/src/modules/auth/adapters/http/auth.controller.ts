@@ -21,6 +21,7 @@ import {
   MeResponseDto,
   UpdateProfileRequestDto,
 } from './auth.dto';
+import { RateLimit } from './rate-limit.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -28,6 +29,7 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public()
+  @RateLimit('login')
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Exchange email and password for a bearer access token' })

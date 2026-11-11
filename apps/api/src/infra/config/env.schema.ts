@@ -33,6 +33,11 @@ export const envSchema = z.object({
   IMPORT_JOB_BACKOFF_MS: z.coerce.number().int().positive().default(1000),
   IMPORT_RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(30000),
   IMPORT_RECONCILE_AFTER_MS: z.coerce.number().int().positive().default(60000),
+  THROTTLE_LOGIN_LIMIT: z.coerce.number().int().positive().default(5),
+  THROTTLE_LOGIN_TTL_MS: z.coerce.number().int().positive().default(60000),
+  THROTTLE_ACCESS_REQUEST_LIMIT: z.coerce.number().int().positive().default(3),
+  THROTTLE_ACCESS_REQUEST_TTL_MS: z.coerce.number().int().positive().default(3600000),
+  TRUST_PROXY_HOPS: z.coerce.number().int().nonnegative().default(0),
 }).superRefine((env, context) => {
   if (env.NODE_ENV === 'production' && env.JWT_SECRET === JWT_SECRET_PLACEHOLDER) {
     context.addIssue({

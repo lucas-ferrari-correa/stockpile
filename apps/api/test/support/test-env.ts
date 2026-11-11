@@ -20,5 +20,7 @@ export function loadTestEnv(schema: string = TEST_DATABASE_SCHEMA): void {
     NODE_ENV: 'test',
     LOG_LEVEL: process.env.LOG_LEVEL ?? 'silent',
     DATABASE_URL: withSchema(baseDatabaseUrl, schema),
+    THROTTLE_LOGIN_LIMIT: '100000',
+    THROTTLE_ACCESS_REQUEST_LIMIT: '100000',
   });
 }

@@ -88,6 +88,7 @@ export const authErrorCodeSchema = z.enum([
   'ACCOUNT_UNAVAILABLE',
   'ACCESS_DENIED',
   'CURRENT_PASSWORD_INVALID',
+  'RATE_LIMITED',
 ]);
 
 export type AuthErrorCode = z.infer<typeof authErrorCodeSchema>;

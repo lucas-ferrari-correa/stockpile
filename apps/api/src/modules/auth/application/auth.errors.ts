@@ -1,4 +1,4 @@
-import { ForbiddenException, HttpStatus, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, HttpException, HttpStatus, UnauthorizedException } from '@nestjs/common';
 import { AuthError } from '@stockpile/shared';
 
 const MESSAGES = {
@@ -10,6 +10,7 @@ const MESSAGES = {
     'This account does not have access. It may have been blocked, rejected or deleted. If it was deleted, a re-registration request has been sent to the administrator.',
   ACCESS_DENIED: 'You do not have permission to access this resource',
   CURRENT_PASSWORD_INVALID: 'The current password is incorrect',
+  RATE_LIMITED: 'Too many requests, please try again later',
 } as const satisfies Record<AuthError['code'], string>;
 
 export function unauthorized(code: 'UNAUTHENTICATED' | 'INVALID_CREDENTIALS'): UnauthorizedException {
@@ -22,4 +23,9 @@ export function forbidden(
 ): ForbiddenException {
   const body: AuthError = { statusCode: HttpStatus.FORBIDDEN, code, message: MESSAGES[code] };
   return new ForbiddenException(body);
+}
+
+export function rateLimited(): HttpException {
+  const body: AuthError = { statusCode: HttpStatus.TOO_MANY_REQUESTS, code: 'RATE_LIMITED', message: MESSAGES.RATE_LIMITED };
+  return new HttpException(body, HttpStatus.TOO_MANY_REQUESTS);
 }

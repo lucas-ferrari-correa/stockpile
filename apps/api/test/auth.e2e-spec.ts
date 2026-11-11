@@ -11,11 +11,13 @@ import {
   meResponseSchema,
   userPageSchema,
 } from '@stockpile/shared';
+import Redis from 'ioredis';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { PrismaService } from '../src/infra/prisma/prisma.service';
+import { REDIS } from '../src/infra/redis/redis.constants';
 import { RequirePermissions } from '../src/modules/auth/adapters/http/auth.decorators';
 import { PASSWORD_HASHER, PasswordHasher } from '../src/modules/auth/ports/password-hasher.port';
 import { seedRoles } from '../src/seed/admin-seed';
@@ -28,6 +30,40 @@ class ProbeController {
   @RequirePermissions('inventory:write')
   write(): { ok: true } {
     return { ok: true };
+  }
+}
+
+type RateLimitEnv = Partial<
+  Record<'THROTTLE_LOGIN_LIMIT' | 'THROTTLE_LOGIN_TTL_MS' | 'THROTTLE_ACCESS_REQUEST_LIMIT' | 'TRUST_PROXY_HOPS', string>
+>;
+
+async function createAppWith(overrides: RateLimitEnv): Promise<INestApplication<App>> {
+  const previous = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, overrides);
+  try {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const created = moduleRef.createNestApplication<INestApplication<App>>();
+    configureApp(created);
+    await created.init();
+    return created;
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function clearThrottleKeys(redis: Redis): Promise<void> {
+  const keys: string[] = [];
+  for await (const batch of redis.scanStream({ match: '{throttle:*', count: 100 }) as AsyncIterable<string[]>) {
+    keys.push(...batch);
+  }
+  if (keys.length > 0) {
+    await redis.del(...keys);
   }
 }
 
@@ -407,6 +443,126 @@ describe('auth', () => {
       const response = await call().expect(401);
 
       expect(errorCode(response.body)).toBe('UNAUTHENTICATED');
+    });
+  });
+
+  describe('rate limit', () => {
+    const LOGIN_LIMIT = 3;
+    const ACCESS_REQUEST_LIMIT = 2;
+    const SHORT_TTL_MS = 1000;
+    const limits: RateLimitEnv = {
+      THROTTLE_LOGIN_LIMIT: String(LOGIN_LIMIT),
+      THROTTLE_LOGIN_TTL_MS: '60000',
+      THROTTLE_ACCESS_REQUEST_LIMIT: String(ACCESS_REQUEST_LIMIT),
+    };
+    let limited: INestApplication<App>;
+    let sibling: INestApplication<App>;
+    let shortWindow: INestApplication<App>;
+    let behindProxy: INestApplication<App>;
+    let redis: Redis;
+
+    function attempt(target: INestApplication<App>, forwardedFor?: string): request.Test {
+      const pending = request(target.getHttpServer()).post('/auth/login').send({ email: 'nobody@example.test', password: PASSWORD });
+      return forwardedFor === undefined ? pending : pending.set('X-Forwarded-For', forwardedFor);
+    }
+
+    function requestAccess(target: INestApplication<App>): request.Test {
+      return request(target.getHttpServer())
+        .post('/auth/access-requests')
+        .send({ name: 'Requester', email: 'requester@example.test', password: 'a-strong-password' });
+    }
+
+    async function exhaustLogin(target: INestApplication<App>, forwardedFor?: string): Promise<void> {
+      for (let index = 0; index < LOGIN_LIMIT; index += 1) {
+        await attempt(target, forwardedFor).expect(401);
+      }
+    }
+
+    function expectRateLimited(response: request.Response): void {
+      expect(response.status).toBe(429);
+      expect(response.body).toEqual({ statusCode: 429, code: 'RATE_LIMITED', message: 'Too many requests, please try again later' });
+      expect(Number(response.headers['retry-after'])).toBeGreaterThanOrEqual(1);
+    }
+
+    beforeAll(async () => {
+      limited = await createAppWith(limits);
+      sibling = await createAppWith(limits);
+      shortWindow = await createAppWith({ ...limits, THROTTLE_LOGIN_TTL_MS: String(SHORT_TTL_MS) });
+      behindProxy = await createAppWith({ ...limits, TRUST_PROXY_HOPS: '1' });
+      redis = limited.get<Redis>(REDIS);
+    });
+
+    beforeEach(async () => {
+      await clearThrottleKeys(redis);
+    });
+
+    afterAll(async () => {
+      await clearThrottleKeys(redis);
+      await Promise.all([limited, sibling, shortWindow, behindProxy].map((target) => target.close()));
+    });
+
+    it('answers login attempts up to the limit and rejects the next one with 429 and Retry-After', async () => {
+      const user = await createUser();
+
+      await request(limited.getHttpServer()).post('/auth/login').send({ email: user.email, password: PASSWORD }).expect(200);
+      for (let index = 1; index < LOGIN_LIMIT; index += 1) {
+        await attempt(limited).expect(401);
+      }
+      const blocked = await request(limited.getHttpServer()).post('/auth/login').send({ email: user.email, password: PASSWORD });
+
+      expectRateLimited(blocked);
+      expect(Number(blocked.headers['retry-after'])).toBeLessThanOrEqual(60);
+    });
+
+    it('accepts login attempts again once the window expires', async () => {
+      await exhaustLogin(shortWindow);
+      const blocked = await attempt(shortWindow);
+      expectRateLimited(blocked);
+
+      await new Promise((resolve) => setTimeout(resolve, SHORT_TTL_MS + 200));
+
+      await attempt(shortWindow).expect(401);
+    });
+
+    it('shares the attempt count between instances backed by the same redis', async () => {
+      for (let index = 0; index < LOGIN_LIMIT; index += 1) {
+        await attempt(index % 2 === 0 ? limited : sibling).expect(401);
+      }
+
+      expectRateLimited(await attempt(sibling));
+    });
+
+    it('limits access requests with a counter independent from login', async () => {
+      await exhaustLogin(limited);
+      expectRateLimited(await attempt(limited));
+
+      for (let index = 0; index < ACCESS_REQUEST_LIMIT; index += 1) {
+        await requestAccess(limited).expect(202);
+      }
+
+      expectRateLimited(await requestAccess(limited));
+    });
+
+    it('keeps routes without a rate limit available after the login limit is reached', async () => {
+      await exhaustLogin(limited);
+      expectRateLimited(await attempt(limited));
+
+      for (let index = 0; index <= LOGIN_LIMIT; index += 1) {
+        await request(limited.getHttpServer()).get('/health').expect(200);
+      }
+    });
+
+    it('counts each forwarded client address separately behind a trusted proxy', async () => {
+      await exhaustLogin(behindProxy, '203.0.113.10');
+      expectRateLimited(await attempt(behindProxy, '203.0.113.10'));
+
+      await attempt(behindProxy, '203.0.113.20').expect(401);
+    });
+
+    it('ignores X-Forwarded-For when no proxy is trusted', async () => {
+      await exhaustLogin(limited, '203.0.113.10');
+
+      expectRateLimited(await attempt(limited, '203.0.113.20'));
     });
   });
 });

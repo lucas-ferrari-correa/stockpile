@@ -6,11 +6,13 @@ import { BcryptPasswordHasher } from './adapters/bcrypt/bcrypt-password-hasher';
 import { AuthController } from './adapters/http/auth.controller';
 import { JwtAuthGuard } from './adapters/http/jwt-auth.guard';
 import { PermissionsGuard } from './adapters/http/permissions.guard';
+import { RateLimitModule } from './adapters/http/rate-limit.module';
 import { AuthService } from './application/auth.service';
 import { PASSWORD_HASHER } from './ports/password-hasher.port';
 
 @Module({
   imports: [
+    RateLimitModule,
     JwtModule.registerAsync({
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({

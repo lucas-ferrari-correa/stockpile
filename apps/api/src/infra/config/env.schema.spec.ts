@@ -13,6 +13,13 @@ describe('parseEnv', () => {
     expect(env.PORT).toBe(3000);
     expect(env.LOG_LEVEL).toBe('info');
     expect(env.EXCHANGE_CURRENCIES).toEqual(['EUR', 'GBP', 'JPY', 'CNY', 'CAD', 'BRL', 'COP']);
+    expect(env).toMatchObject({
+      THROTTLE_LOGIN_LIMIT: 5,
+      THROTTLE_LOGIN_TTL_MS: 60000,
+      THROTTLE_ACCESS_REQUEST_LIMIT: 3,
+      THROTTLE_ACCESS_REQUEST_TTL_MS: 3600000,
+      TRUST_PROXY_HOPS: 0,
+    });
   });
 
   it('normalizes the configured currency list', () => {
@@ -33,6 +40,10 @@ describe('parseEnv', () => {
 
   it('fails on a non numeric port', () => {
     expect(() => parseEnv({ ...validEnv, PORT: 'abc' })).toThrow(/PORT/);
+  });
+
+  it('fails on a rate limit that is not positive', () => {
+    expect(() => parseEnv({ ...validEnv, THROTTLE_LOGIN_LIMIT: '0' })).toThrow(/THROTTLE_LOGIN_LIMIT/);
   });
 
   it('fails on an unknown log level', () => {
