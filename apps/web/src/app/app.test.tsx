@@ -21,7 +21,7 @@ describe('App', () => {
   it('renders the home route with the api status from the health endpoint', async () => {
     stubFetch(
       () =>
-        new Response(JSON.stringify({ status: 'ok', checks: { database: 'up', redis: 'up' } }), {
+        new Response(JSON.stringify({ status: 'ok', checks: { database: 'up', redis: 'up', queue: 'up' } }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),

@@ -4,10 +4,12 @@ import { ZodSerializerInterceptor, ZodValidationPipe } from 'nestjs-zod';
 import { AppConfigModule } from './infra/config/config.module';
 import { LoggerModule } from './infra/logger/logger.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
+import { QueueModule } from './infra/queue/queue.module';
 import { RedisModule } from './infra/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
 import { HealthModule } from './modules/health/health.module';
+import { ImportsModule } from './modules/imports/imports.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { UsersModule } from './modules/users/users.module';
 
@@ -17,9 +19,11 @@ import { UsersModule } from './modules/users/users.module';
     LoggerModule,
     PrismaModule,
     RedisModule,
+    QueueModule,
     AuthModule,
     ExchangeRatesModule,
     HealthModule,
+    ImportsModule,
     RolesModule,
     UsersModule,
   ],

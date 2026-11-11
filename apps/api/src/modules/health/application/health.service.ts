@@ -3,6 +3,7 @@ import { HealthStatus } from '@stockpile/shared';
 import Redis from 'ioredis';
 import { PrismaService } from '../../../infra/prisma/prisma.service';
 import { REDIS } from '../../../infra/redis/redis.constants';
+import { IMPORT_QUEUE, ImportQueue } from '../../imports/ports/import-queue';
 
 type ComponentStatus = HealthStatus['checks']['database'];
 
@@ -11,13 +12,14 @@ export class HealthService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(REDIS) private readonly redis: Redis,
+    @Inject(IMPORT_QUEUE) private readonly queue: ImportQueue,
   ) {}
 
   async check(): Promise<HealthStatus> {
-    const [database, redis] = await Promise.all([this.checkDatabase(), this.checkRedis()]);
+    const [database, redis, queue] = await Promise.all([this.checkDatabase(), this.checkRedis(), this.checkQueue()]);
     return {
-      status: database === 'up' && redis === 'up' ? 'ok' : 'degraded',
-      checks: { database, redis },
+      status: database === 'up' && redis === 'up' && queue === 'up' ? 'ok' : 'degraded',
+      checks: { database, redis, queue },
     };
   }
 
@@ -36,5 +38,9 @@ export class HealthService {
     } catch {
       return 'down';
     }
+  }
+
+  private async checkQueue(): Promise<ComponentStatus> {
+    return (await this.queue.isReady()) ? 'up' : 'down';
   }
 }

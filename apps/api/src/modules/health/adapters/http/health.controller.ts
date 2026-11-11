@@ -13,7 +13,7 @@ export class HealthController {
   constructor(private readonly health: HealthService) { }
 
   @Get()
-  @ApiOperation({ summary: 'Check connectivity with Postgres and Redis' })
+  @ApiOperation({ summary: 'Check connectivity with Postgres, Redis and the import queue' })
   @ZodResponse({ status: 200, description: 'All dependencies are reachable', type: HealthStatusDto })
   @ApiServiceUnavailableResponse({ description: 'At least one dependency is down', type: HealthStatusDto.Output })
   async check(): Promise<HealthStatus> {

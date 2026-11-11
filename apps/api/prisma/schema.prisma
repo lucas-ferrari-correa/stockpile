@@ -72,6 +72,7 @@ model User {
   role           Role?       @relation(fields: [roleId], references: [id], onDelete: Restrict)
   events         UserEvent[] @relation("UserEventSubject")
   actedEvents    UserEvent[] @relation("UserEventActor")
+  imports        Import[]
 
   @@index([roleId])
   @@map("users")
@@ -92,21 +93,28 @@ model UserEvent {
 }
 
 model Import {
-  id            String                @id @default(uuid()) @db.Uuid
-  status        ImportStatus          @default(pending)
-  fileName      String                @map("file_name")
-  totalRows     Int?                  @map("total_rows")
-  processedRows Int                   @default(0) @map("processed_rows")
-  acceptedRows  Int                   @default(0) @map("accepted_rows")
-  rejectedRows  Int                   @default(0) @map("rejected_rows")
-  failureReason String?               @map("failure_reason")
-  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
-  rateSnapshot  ExchangeRateSnapshot?
-  stockItems    StockItem[]
-  errors        ImportError[]
+  id               String                @id @default(uuid()) @db.Uuid
+  status           ImportStatus          @default(pending)
+  fileName         String                @map("file_name")
+  totalRows        Int?                  @map("total_rows")
+  processedRows    Int                   @default(0) @map("processed_rows")
+  acceptedRows     Int                   @default(0) @map("accepted_rows")
+  rejectedRows     Int                   @default(0) @map("rejected_rows")
+  rejectedByReason Json                  @default("{}") @map("rejected_by_reason")
+  failureReason    String?               @map("failure_reason")
+  contentSha256    String?               @map("content_sha256") @db.Char(64)
+  forced           Boolean               @default(false)
+  filePath         String?               @map("file_path")
+  createdById      String                @map("created_by_id") @db.Uuid
+  createdBy        User                  @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  rateSnapshot     ExchangeRateSnapshot?
+  stockItems       StockItem[]
+  errors           ImportError[]
 
   @@index([createdAt(sort: Desc)])
+  @@index([status, updatedAt])
   @@map("imports")
 }
 

@@ -1,4 +1,4 @@
-import { parseEnv } from './env.schema';
+import { JWT_SECRET_PLACEHOLDER, parseEnv } from './env.schema';
 
 const validEnv = {
   DATABASE_URL: 'postgresql://stockpile:stockpile@localhost:5433/stockpile',
@@ -37,5 +37,13 @@ describe('parseEnv', () => {
 
   it('fails on an unknown log level', () => {
     expect(() => parseEnv({ ...validEnv, LOG_LEVEL: 'verbose' })).toThrow(/LOG_LEVEL/);
+  });
+
+  it('rejects the placeholder jwt secret in production', () => {
+    expect(() => parseEnv({ ...validEnv, NODE_ENV: 'production', JWT_SECRET: JWT_SECRET_PLACEHOLDER })).toThrow(/JWT_SECRET/);
+  });
+
+  it('accepts the placeholder jwt secret outside production', () => {
+    expect(parseEnv({ ...validEnv, NODE_ENV: 'test', JWT_SECRET: JWT_SECRET_PLACEHOLDER }).JWT_SECRET).toBe(JWT_SECRET_PLACEHOLDER);
   });
 });

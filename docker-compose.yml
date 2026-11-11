@@ -19,8 +19,11 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
     ports:
       - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -55,8 +58,13 @@ services:
       PORT: 3000
       LOG_LEVEL: ${LOG_LEVEL:-info}
       EXCHANGE_CURRENCIES: ${EXCHANGE_CURRENCIES:-EUR,GBP,JPY,CNY,CAD,BRL,COP}
-      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-jwt-secret-change-me-0123456789}
+      JWT_SECRET: ${JWT_SECRET:-}
       JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
+      EXCHANGE_RATES_TIMEOUT_MS: ${EXCHANGE_RATES_TIMEOUT_MS:-2000}
+      UPLOAD_DIR: /app/apps/api/uploads
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-104857600}
+      IMPORT_JOB_ATTEMPTS: ${IMPORT_JOB_ATTEMPTS:-3}
+      IMPORT_JOB_BACKOFF_MS: ${IMPORT_JOB_BACKOFF_MS:-1000}
     ports:
       - "${API_PORT:-3000}:3000"
     volumes:
@@ -78,7 +86,13 @@ services:
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}
       EXCHANGE_CURRENCIES: ${EXCHANGE_CURRENCIES:-EUR,GBP,JPY,CNY,CAD,BRL,COP}
-      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-jwt-secret-change-me-0123456789}
+      JWT_SECRET: ${JWT_SECRET:-}
+      UPLOAD_DIR: /app/apps/api/uploads
+      IMPORT_CONCURRENCY: ${IMPORT_CONCURRENCY:-2}
+      IMPORT_JOB_ATTEMPTS: ${IMPORT_JOB_ATTEMPTS:-3}
+      IMPORT_JOB_BACKOFF_MS: ${IMPORT_JOB_BACKOFF_MS:-1000}
+      IMPORT_RECONCILE_INTERVAL_MS: ${IMPORT_RECONCILE_INTERVAL_MS:-30000}
+      IMPORT_RECONCILE_AFTER_MS: ${IMPORT_RECONCILE_AFTER_MS:-60000}
     volumes:
       - uploads:/app/apps/api/uploads
     depends_on:
@@ -101,4 +115,5 @@ services:
 
 volumes:
   postgres-data:
+  redis-data:
   uploads:

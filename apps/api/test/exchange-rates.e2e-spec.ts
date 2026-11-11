@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { IncomingMessage, Server, ServerResponse, createServer } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { INestApplication, LoggerService } from '@nestjs/common';
@@ -288,6 +289,7 @@ describe('exchange rates', () => {
     let prisma: PrismaService;
     let redis: Redis;
     let currencies: readonly string[];
+    let ownerId: string;
     const fake = new FakeRatesProvider();
 
     function ratesFor(codes: readonly string[]): Record<string, number> {
@@ -296,7 +298,7 @@ describe('exchange rates', () => {
 
     async function seedImport(): Promise<string> {
       const created = await prisma.import.create({
-        data: { fileName: 'products.csv' },
+        data: { fileName: 'products.csv', createdById: ownerId },
         select: { id: true },
       });
       return created.id;
@@ -316,9 +318,16 @@ describe('exchange rates', () => {
       prisma = app.get(PrismaService);
       redis = app.get<Redis>(REDIS);
       currencies = app.get(AppConfigService).get('EXCHANGE_CURRENCIES');
+      const owner = await prisma.user.create({
+        data: { name: 'Rates Owner', email: `${randomUUID()}@example.test`, passwordHash: 'unused' },
+        select: { id: true },
+      });
+      ownerId = owner.id;
     });
 
     afterAll(async () => {
+      await prisma.import.deleteMany();
+      await prisma.user.deleteMany({ where: { id: ownerId } });
       await app.close();
     });
 

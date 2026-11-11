@@ -19,10 +19,10 @@ describe('health', () => {
     await app.close();
   });
 
-  it('reports database and redis as up', async () => {
+  it('reports database, redis and the import queue as up', async () => {
     const response = await request(app.getHttpServer()).get('/health').expect(200);
 
-    expect(response.body).toEqual({ status: 'ok', checks: { database: 'up', redis: 'up' } });
+    expect(response.body).toEqual({ status: 'ok', checks: { database: 'up', redis: 'up', queue: 'up' } });
   });
 
   it('echoes the incoming request id', async () => {

@@ -17,7 +17,7 @@ describe('currencyListSchema', () => {
 
 describe('healthStatusSchema', () => {
   it('accepts a healthy payload', () => {
-    expect(healthStatusSchema.parse({ status: 'ok', checks: { database: 'up', redis: 'up' } }).status).toBe('ok');
+    expect(healthStatusSchema.parse({ status: 'ok', checks: { database: 'up', redis: 'up', queue: 'up' } }).status).toBe('ok');
   });
 });
 

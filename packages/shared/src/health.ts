@@ -5,6 +5,7 @@ export const healthStatusSchema = z.object({
   checks: z.object({
     database: z.enum(['up', 'down']),
     redis: z.enum(['up', 'down']),
+    queue: z.enum(['up', 'down']),
   }),
 });
 
