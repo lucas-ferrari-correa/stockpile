@@ -67,7 +67,7 @@ export class AuthService {
         sessionVersion: true,
         status: true,
         deletedAt: true,
-        role: { select: { id: true, name: true, permissions: { select: { permission: true } } } },
+        role: { select: { id: true, name: true, permissions: { select: { permission: true }, orderBy: { permission: 'asc' } } } },
       },
     });
 

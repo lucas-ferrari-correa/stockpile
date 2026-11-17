@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ZodSerializerInterceptor, ZodValidationPipe } from 'nestjs-zod';
 import { AppConfigModule } from './infra/config/config.module';
+import { ListingModule } from './infra/listing/listing.module';
 import { LoggerModule } from './infra/logger/logger.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
 import { QueueModule } from './infra/queue/queue.module';
@@ -11,6 +12,7 @@ import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.mod
 import { HealthModule } from './modules/health/health.module';
 import { ImportsModule } from './modules/imports/imports.module';
 import { RolesModule } from './modules/roles/roles.module';
+import { StockItemsModule } from './modules/stock-items/stock-items.module';
 import { UsersModule } from './modules/users/users.module';
 
 @Module({
@@ -18,6 +20,7 @@ import { UsersModule } from './modules/users/users.module';
     AppConfigModule,
     LoggerModule,
     PrismaModule,
+    ListingModule,
     RedisModule,
     QueueModule,
     AuthModule,
@@ -25,6 +28,7 @@ import { UsersModule } from './modules/users/users.module';
     HealthModule,
     ImportsModule,
     RolesModule,
+    StockItemsModule,
     UsersModule,
   ],
   providers: [

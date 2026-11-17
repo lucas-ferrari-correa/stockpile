@@ -61,7 +61,7 @@ export class RolesService {
         system: true,
         createdAt: true,
         updatedAt: true,
-        permissions: { select: { permission: true } },
+        permissions: { select: { permission: true }, orderBy: { permission: 'asc' } },
         _count: { select: { users: { where: { deletedAt: null } } } },
       },
     });
@@ -79,7 +79,7 @@ export class RolesService {
         system: true,
         createdAt: true,
         updatedAt: true,
-        permissions: { select: { permission: true } },
+        permissions: { select: { permission: true }, orderBy: { permission: 'asc' } },
       },
     });
     if (!role) {
@@ -103,7 +103,7 @@ export class RolesService {
             system: true,
             createdAt: true,
             updatedAt: true,
-            permissions: { select: { permission: true } },
+            permissions: { select: { permission: true }, orderBy: { permission: 'asc' } },
           },
         });
         return toRole(created);
@@ -141,7 +141,7 @@ export class RolesService {
   private async updateWithin(tx: Prisma.TransactionClient, id: string, input: UpdateRole): Promise<Role> {
     const role = await tx.role.findUnique({
       where: { id },
-      select: { id: true, system: true, permissions: { select: { permission: true } } },
+      select: { id: true, system: true, permissions: { select: { permission: true }, orderBy: { permission: 'asc' } } },
     });
     if (!role) {
       throw roleNotFound();
@@ -175,7 +175,7 @@ export class RolesService {
         system: true,
         createdAt: true,
         updatedAt: true,
-        permissions: { select: { permission: true } },
+        permissions: { select: { permission: true }, orderBy: { permission: 'asc' } },
       },
     });
     return toRole(updated);

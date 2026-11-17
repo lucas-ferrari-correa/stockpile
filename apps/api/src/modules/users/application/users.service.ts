@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, UserStatus } from '@prisma/client';
-import { Permission, UserListItem, UserListQuery, UserPage } from '@stockpile/shared';
+import { Permission, UserListItem, UserListQuery, UserPage, UserSort } from '@stockpile/shared';
+import { z } from 'zod';
+import { ListingDefinition, ListingModel, ListingService, enumSearch, listingColumns } from '../../../infra/listing/listing';
 import { PrismaService } from '../../../infra/prisma/prisma.service';
 import { runSerializable } from '../../../infra/prisma/serializable';
 import { countActiveGovernors } from '../../auth/application/governance';
@@ -47,6 +49,51 @@ export function toUserListItem(user: UserRecord): UserListItem {
   };
 }
 
+interface UsersListingModel extends ListingModel<UserSort> {
+  row: UserRecord;
+  where: Prisma.UserWhereInput;
+  orderBy: Prisma.UserOrderByWithRelationInput;
+  query: UserListQuery;
+  context: null;
+}
+
+const columns = listingColumns<UserRecord, Prisma.UserWhereInput, Prisma.UserOrderByWithRelationInput>();
+
+const USER_STATUS_ORDER: readonly UserStatus[] = Object.values(UserStatus);
+
+export const USERS_LISTING: ListingDefinition<UsersListingModel, UserSort, 'status' | 'roleId'> = {
+  sorts: {
+    name: columns.text({ where: (name) => ({ name }), orderBy: (name) => ({ name }), read: (row) => row.name }),
+    email: columns.text({ where: (email) => ({ email }), orderBy: (email) => ({ email }), read: (row) => row.email }),
+    status: columns.enum({
+      values: USER_STATUS_ORDER,
+      where: (status) => ({ status }),
+      orderBy: (status) => ({ status }),
+      read: (row) => row.status,
+    }),
+    createdAt: columns.instant({
+      where: (createdAt) => ({ createdAt }),
+      orderBy: (createdAt) => ({ createdAt }),
+      read: (row) => row.createdAt,
+    }),
+  },
+  id: columns.id({ schema: z.uuid(), where: (id) => ({ id }), orderBy: (id) => ({ id }), read: (row) => row.id }),
+  filters: {
+    status: (status) => ({ status: { in: status } }),
+    roleId: (roleId) => ({ roleId: { in: roleId } }),
+  },
+  created: (createdAt) => ({ createdAt }),
+  search: {
+    text: [(name) => ({ name }), (email) => ({ email })],
+    enums: [enumSearch(USER_STATUS_ORDER, (status) => ({ status: { in: status } }))],
+    dates: { kind: 'instant', columns: [(createdAt) => ({ createdAt })] },
+  },
+  scope: () => ({}),
+  and: (AND) => ({ AND }),
+  or: (OR) => ({ OR }),
+  invalidCursor,
+};
+
 function deletedAtUpdate(effect: DeletedAtEffect): { deletedAt?: Date | null } {
   switch (effect) {
     case 'keep':
@@ -64,42 +111,34 @@ function statusUpdate(transition: UserTransition): { status?: UserStatus } {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly listing: ListingService,
+  ) {}
 
   async list(query: UserListQuery): Promise<UserPage> {
-    if (query.cursor) {
-      const cursorUser = await this.prisma.user.findUnique({
-        where: { id: query.cursor },
-        select: { id: true },
-      });
-      if (!cursorUser) {
-        throw invalidCursor();
-      }
-    }
-
-    const rows: UserRecord[] = await this.prisma.user.findMany({
-      where: { status: query.status },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: query.limit + 1,
-      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        status: true,
-        createdAt: true,
-        deletedAt: true,
-        role: { select: { id: true, name: true } },
+    const page = await this.listing.page(USERS_LISTING, query, null, {
+      findMany: (args) =>
+        this.prisma.user.findMany({
+          ...args,
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            status: true,
+            createdAt: true,
+            deletedAt: true,
+            role: { select: { id: true, name: true } },
+          },
+        }),
+      dateBounds: async (where) => {
+        const bounds = await this.prisma.user.aggregate({ where, _min: { createdAt: true }, _max: { createdAt: true } });
+        return [bounds._min.createdAt, bounds._max.createdAt];
       },
+      total: ({ where, paged }) => (paged ? Promise.resolve(null) : this.prisma.user.count({ where })),
     });
 
-    const hasMore = rows.length > query.limit;
-    const page = hasMore ? rows.slice(0, query.limit) : rows;
-    const last = page.at(-1);
-    return {
-      items: page.map(toUserListItem),
-      nextCursor: hasMore && last ? last.id : null,
-    };
+    return { items: page.rows.map(toUserListItem), nextCursor: page.nextCursor, total: page.total };
   }
 
   async apply(command: UserCommand, targetId: string, actorId: string): Promise<UserListItem> {
@@ -130,7 +169,7 @@ export class UsersService {
         status: true,
         createdAt: true,
         deletedAt: true,
-        role: { select: { id: true, name: true, permissions: { select: { permission: true } } } },
+        role: { select: { id: true, name: true, permissions: { select: { permission: true }, orderBy: { permission: 'asc' } } } },
       },
     });
     if (!target) {
@@ -203,7 +242,7 @@ export class UsersService {
     }
     const role = await tx.role.findUnique({
       where: { id: command.roleId },
-      select: { id: true, permissions: { select: { permission: true } } },
+      select: { id: true, permissions: { select: { permission: true }, orderBy: { permission: 'asc' } } },
     });
     if (!role) {
       throw roleNotFound();

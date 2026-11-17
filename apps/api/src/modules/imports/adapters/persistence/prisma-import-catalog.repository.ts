@@ -194,7 +194,7 @@ export class PrismaImportCatalogRepository implements ImportCatalogRepository {
   }
 
   async analyzeCatalog(): Promise<void> {
-    await this.prisma.$executeRaw`ANALYZE stock_items`;
+    await this.prisma.$executeRaw`VACUUM (ANALYZE) stock_items`;
   }
 }
 

@@ -12,8 +12,11 @@ export function configureApp(app: INestApplication): void {
 
   const trustProxyHops = app.get(AppConfigService).get('TRUST_PROXY_HOPS');
   const httpAdapter = app.getHttpAdapter();
-  if (trustProxyHops > 0 && httpAdapter instanceof ExpressAdapter) {
-    httpAdapter.set('trust proxy', trustProxyHops);
+  if (httpAdapter instanceof ExpressAdapter) {
+    httpAdapter.set('etag', false);
+    if (trustProxyHops > 0) {
+      httpAdapter.set('trust proxy', trustProxyHops);
+    }
   }
 
   const document = SwaggerModule.createDocument(

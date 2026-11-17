@@ -11,6 +11,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthUser, UserListItem, UserPage } from '@stockpile/shared';
 import { ZodResponse } from 'nestjs-zod';
+import { ApiSearchQuery } from '../../../../infra/http/search-query-docs';
 import { CurrentUser, RequirePermissions } from '../../../auth/adapters/http/auth.decorators';
 import { AuthErrorDto } from '../../../auth/adapters/http/auth.dto';
 import { UsersService } from '../../application/users.service';
@@ -72,10 +73,21 @@ export class UsersController {
   constructor(private readonly users: UsersService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List users, newest first, with cursor pagination' })
+  @ApiOperation({
+    summary: 'List users with filters, search, sorting and keyset pagination',
+    description: [
+      'Sorted by createdAt, newest first, unless sort and order say otherwise. status and roleId accept several values by repeating the parameter. createdFrom and createdTo are inclusive YYYY-MM-DD days in the IANA time zone tz.',
+      'Pagination is keyset based: pass nextCursor back as cursor with the same sort and order. total is the number of matching users on the first page and null on pages requested with a cursor.',
+    ].join('\n\n'),
+  })
+  @ApiSearchQuery(
+    'General search. Matches users whose name or email contains the term (case-insensitive), whose status contains it, or who were created on a date such as 10/27/2026, 10/27 (any year) or 10/2026 (whole month) in the time zone tz.',
+    { name: 'maria', email: '@example.com', status: 'pending', day: '10/27/2026', month: '10/2026' },
+  )
   @ZodResponse({ status: 200, description: 'A page of users', type: UserPageDto })
   @ApiBadRequestResponse({
-    description: 'Invalid status, cursor or limit, or the cursor does not point to an existing user',
+    description:
+      'Invalid query parameters, or a cursor that is malformed, does not match sort and order, or points to no user',
     type: UserErrorDto.Output,
     example: { statusCode: 400, code: 'INVALID_CURSOR', message: 'The cursor does not match any user' },
   })
