@@ -15,6 +15,7 @@ RUN pnpm --filter @stockpile/shared build \
 
 FROM base AS runtime
 ENV NODE_ENV=production
+ENV TZ=UTC
 COPY --from=build /app /app
 WORKDIR /app/apps/api
 

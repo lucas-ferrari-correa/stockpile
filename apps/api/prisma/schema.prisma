@@ -100,6 +100,9 @@ model Import {
   processedRows    Int                   @default(0) @map("processed_rows")
   acceptedRows     Int                   @default(0) @map("accepted_rows")
   rejectedRows     Int                   @default(0) @map("rejected_rows")
+  itemCount        Int                   @default(0) @map("item_count")
+  itemsCreated     Int                   @default(0) @map("items_created")
+  itemsUpdated     Int                   @default(0) @map("items_updated")
   rejectedByReason Json                  @default("{}") @map("rejected_by_reason")
   failureReason    String?               @map("failure_reason")
   contentSha256    String?               @map("content_sha256") @db.Char(64)
@@ -112,6 +115,7 @@ model Import {
   rateSnapshot     ExchangeRateSnapshot?
   stockItems       StockItem[]
   errors           ImportError[]
+  stagedRows       ImportStagedRow[]
 
   @@index([createdAt(sort: Desc)])
   @@index([status, updatedAt])
@@ -165,4 +169,25 @@ model ImportError {
 
   @@index([importId, line])
   @@map("import_errors")
+}
+
+model ImportStagedRow {
+  importId       String    @map("import_id") @db.Uuid
+  line           Int
+  sku            String
+  name           String
+  category       String
+  brand          String?
+  supplier       String
+  country        String
+  warehouse      String
+  lot            String
+  quantity       Int
+  unitCostCents  Int       @map("unit_cost_cents")
+  unitPriceCents Int       @map("unit_price_cents")
+  expiration     DateTime? @db.Date
+  import         Import    @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@id([importId, line])
+  @@map("import_staged_rows")
 }

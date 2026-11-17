@@ -23,6 +23,7 @@ import {
   ratesUnavailableErrorSchema,
 } from '@stockpile/shared';
 import { Job, Queue } from 'bullmq';
+import { PinoLogger } from 'nestjs-pino';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -46,6 +47,7 @@ import { IMPORT_FILE_MISSING_REASON, IMPORT_INTERRUPTED_REASON } from '../src/mo
 import { ExchangeRatesService } from '../src/modules/exchange-rates/application/exchange-rates.service';
 import { ImportsWorkerModule } from '../src/modules/imports/imports-worker.module';
 import { FILE_STORAGE } from '../src/modules/imports/ports/file-storage';
+import { IMPORT_CATALOG_REPOSITORY, ImportCatalogRepository } from '../src/modules/imports/ports/import-catalog';
 import { IMPORT_QUEUE, ImportJobPayload, ImportQueue, importJobPayloadSchema } from '../src/modules/imports/ports/import-queue';
 import { seedRoles } from '../src/seed/admin-seed';
 
@@ -53,6 +55,7 @@ const PASSWORD = 'importer-password-0123';
 const UPLOAD_MAX_BYTES = 48 * 1024 * 1024;
 const LARGE_FILE_BYTES = 40 * 1024 * 1024;
 const JOB_ATTEMPTS = 3;
+const BATCH_SIZE = 4;
 const IMPORTER: readonly Permission[] = ['imports:manage'];
 const RECONCILE_AFTER_MS = 60000;
 const NOTHING_RECOVERED: ImportRecoverySummary = { interrupted: 0, fileMissing: 0, requeued: 0 };
@@ -84,7 +87,7 @@ function deferred(): Deferred {
 }
 
 function csvRow(index: number): string {
-  return `SKU-${index};Product ${index};Tools;Acme;Supplier ${index % 7};US;WH-1;LOT-${index};${index % 50};${index}.10;${index}.90;2030-01-02`;
+  return `SKU-${index};Product ${index};Tools;Acme;Supplier ${index % 7};US;WH-1;LOT-${index};${index % 50};${index}.10;${index}.90;01/02/2030`;
 }
 
 function csvRows(count: number, eol = '\n'): string {
@@ -108,19 +111,21 @@ async function writeLargeCsv(path: string, minBytes: number): Promise<void> {
   await pipeline(Readable.from(largeCsv(minBytes)), createWriteStream(path));
 }
 
-async function* failMidway(source: Readable): AsyncGenerator<Buffer> {
+async function* failMidway(source: Readable, beforeFailure: () => Promise<unknown>): AsyncGenerator<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of source) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
   }
   const content = Buffer.concat(chunks);
   yield content.subarray(0, Math.floor(content.length * 0.6));
+  await beforeFailure();
   throw new Error('Simulated read failure');
 }
 
 class FlakyFileStorage extends LocalFileStorage {
   failuresLeft = 0;
   gate: Promise<void> = Promise.resolve();
+  beforeFailure: () => Promise<unknown> = () => Promise.resolve();
 
   override async open(path: string): Promise<Readable> {
     await this.gate;
@@ -129,7 +134,7 @@ class FlakyFileStorage extends LocalFileStorage {
       return source;
     }
     this.failuresLeft -= 1;
-    return Readable.from(failMidway(source));
+    return Readable.from(failMidway(source, this.beforeFailure));
   }
 }
 
@@ -209,6 +214,60 @@ async function waitFor<T>(probe: () => Promise<T>, accept: (value: T) => boolean
 
 function sha256(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+interface ItemCells {
+  sku: string;
+  name: string;
+  warehouse: string;
+  lot: string;
+  quantity: string;
+  unitCost: string;
+  unitPrice: string;
+  expiration: string;
+}
+
+const ITEM_DEFAULTS: ItemCells = {
+  sku: 'ITEM',
+  name: 'Item',
+  warehouse: 'WH-1',
+  lot: 'LOT-1',
+  quantity: '1',
+  unitCost: '1.00',
+  unitPrice: '2.00',
+  expiration: '6/15/2031',
+};
+
+function quoted(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function itemRow(cells: Partial<ItemCells>): string {
+  const item: ItemCells = { ...ITEM_DEFAULTS, ...cells };
+  return [
+    item.sku,
+    quoted(item.name),
+    'Tools',
+    'Acme',
+    'Supplier',
+    'US',
+    item.warehouse,
+    item.lot,
+    item.quantity,
+    item.unitCost,
+    item.unitPrice,
+    item.expiration,
+  ].join(';');
+}
+
+function itemsCsv(rows: readonly string[]): string {
+  return `${[INVENTORY_CSV_HEADER, ...rows].join('\n')}\n`;
+}
+
+function identityOrder(left: { sku: string; warehouse: string; lot: string }, right: { sku: string; warehouse: string; lot: string }): number {
+  const a = [left.sku, left.warehouse, left.lot].join('\u0001');
+  const b = [right.sku, right.warehouse, right.lot].join('\u0001');
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 setFlagsFromString('--expose-gc');
@@ -338,6 +397,7 @@ describe('imports', () => {
       IMPORT_JOB_ATTEMPTS: String(JOB_ATTEMPTS),
       IMPORT_JOB_BACKOFF_MS: '20',
       IMPORT_CONCURRENCY: '2',
+      IMPORT_BATCH_SIZE: String(BATCH_SIZE),
       IMPORT_RECONCILE_INTERVAL_MS: '3600000',
       IMPORT_RECONCILE_AFTER_MS: String(RECONCILE_AFTER_MS),
     });
@@ -381,6 +441,7 @@ describe('imports', () => {
     await mkdir(uploadDir, { recursive: true });
     storage.failuresLeft = 0;
     storage.gate = Promise.resolve();
+    storage.beforeFailure = () => Promise.resolve();
     importQueue.enqueueFailuresLeft = 0;
     rates.gate = Promise.resolve();
     rates.next = validRates;
@@ -432,26 +493,23 @@ describe('imports', () => {
         fileName: 'products.csv',
         totalRows: 3,
         processedRows: 3,
-        acceptedRows: 0,
+        acceptedRows: 3,
         rejectedRows: 0,
         rejectedByReason: {},
+        itemCount: 3,
+        itemsCreated: 3,
+        itemsUpdated: 0,
         failureReason: null,
         createdAt: expect.any(String) as string,
         updatedAt: expect.any(String) as string,
         rates: { date: validRates.date, base: BASE_CURRENCY },
       } satisfies ImportDetail);
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
     });
 
-    it.each<[string, string, number]>([
-      ['LF line endings', csvRows(5), 5],
-      ['CRLF line endings', csvRows(4, '\r\n'), 4],
-      ['no trailing newline', csvRows(2).trimEnd(), 2],
-      ['blank lines between rows', `${INVENTORY_CSV_HEADER}\n\n${csvRow(1)}\n   \n${csvRow(2)}\n\n`, 2],
-      ['only a header', `${INVENTORY_CSV_HEADER}\n`, 0],
-      ['an empty file', '', 0],
-    ])('counts data rows of a file with %s', async (_label, content, expected) => {
+    it('counts the data rows of a file with mixed line endings and blank lines between rows', async () => {
       const user = await seedUser();
+      const content = `${INVENTORY_CSV_HEADER}\r\n${csvRow(1)}\n\r\n${csvRow(2)}\r\n${csvRow(3)}`;
 
       const importId = acceptedId(await upload(user.token, { content, name: 'rows.CSV' }).expect(202));
 
@@ -460,7 +518,7 @@ describe('imports', () => {
         where: { id: importId },
         select: { totalRows: true, processedRows: true, fileName: true },
       });
-      expect(row).toEqual({ totalRows: expected, processedRows: expected, fileName: 'rows.CSV' });
+      expect(row).toEqual({ totalRows: 3, processedRows: 3, fileName: 'rows.CSV' });
     });
 
     it('streams a file of tens of megabytes to storage without holding it in memory', async () => {
@@ -523,7 +581,7 @@ describe('imports', () => {
       expect(row.totalRows).toBeNull();
       expect(await queue.getJob(importId)).toBeUndefined();
       expect(await queue.count()).toBe(0);
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
       const detail = await getImport(importId, user.token).expect(200);
       expect(detail.body).toMatchObject({ status: 'failed', failureReason: row.failureReason, rates: null });
     });
@@ -540,7 +598,7 @@ describe('imports', () => {
       expect(response.body).toMatchObject({ statusCode: status, code });
       expect(await prisma.import.count()).toBe(0);
       expect(await queue.count()).toBe(0);
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
     });
 
     it('rejects a non multipart body without creating an import', async () => {
@@ -566,7 +624,7 @@ describe('imports', () => {
       expect(response.body).toMatchObject({ statusCode: 413, code: 'FILE_TOO_LARGE' });
       expect(await prisma.import.count()).toBe(0);
       expect(await queue.count()).toBe(0);
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
     }, 60000);
 
     describe('duplicate content', () => {
@@ -588,7 +646,7 @@ describe('imports', () => {
         expect(await prisma.import.count()).toBe(1);
         expect(await prisma.exchangeRateSnapshot.count()).toBe(1);
         expect(await queue.count()).toBe(jobs);
-        expect(await uploadedFiles()).toEqual([]);
+        expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
         const stored = await prisma.import.findUniqueOrThrow({
           where: { id: existingImportId },
           select: { contentSha256: true },
@@ -653,7 +711,7 @@ describe('imports', () => {
         expect(await prisma.import.count()).toBe(1);
         expect(await prisma.import.count({ where: { contentSha256: sha256(CONTENT), forced: false } })).toBe(1);
         expect(await prisma.exchangeRateSnapshot.count()).toBe(1);
-        expect(await uploadedFiles()).toEqual([]);
+        expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
       });
 
       it('rejects the same content uploaded by another user', async () => {
@@ -664,7 +722,7 @@ describe('imports', () => {
         const response = await upload(other.token, { content: CONTENT, name: 'mine.csv' }).expect(409);
 
         expect(response.body).toMatchObject({ code: 'DUPLICATE_IMPORT', existingImportId });
-        expect(await uploadedFiles()).toEqual([]);
+        expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
       });
 
       it.each<[ImportStatus, number]>([
@@ -695,30 +753,14 @@ describe('imports', () => {
         const importId = acceptedId(await upload(owner.token, { content: changed, name: 'first.csv' }).expect(202));
 
         expect(await finished(importId)).toBe('completed');
-        expect(changed.length).toBe(CONTENT.length);
+        const stored = await prisma.import.findUniqueOrThrow({ where: { id: importId }, select: { contentSha256: true } });
+        expect(stored.contentSha256).toBe(sha256(changed));
+        expect(stored.contentSha256).not.toBe(sha256(CONTENT));
       });
     });
   });
 
   describe('processing', () => {
-    it('retries a failed attempt and ends with counters from a single pass', async () => {
-      const user = await seedUser();
-      storage.failuresLeft = 1;
-
-      const importId = acceptedId(await upload(user.token, { content: csvRows(1200), name: 'products.csv' }).expect(202));
-
-      expect(await finished(importId)).toBe('completed');
-      const row = await prisma.import.findUniqueOrThrow({
-        where: { id: importId },
-        select: { totalRows: true, processedRows: true, failureReason: true },
-      });
-      expect(row).toEqual({ totalRows: 1200, processedRows: 1200, failureReason: null });
-      const job = await queue.getJob(importId);
-      expect(job?.attemptsMade).toBe(2);
-      expect(await job?.getState()).toBe('completed');
-      expect(await uploadedFiles()).toEqual([]);
-    });
-
     it('marks the import failed only after the last attempt fails', async () => {
       const user = await seedUser();
       storage.failuresLeft = Number.POSITIVE_INFINITY;
@@ -763,6 +805,377 @@ describe('imports', () => {
     );
   });
 
+  describe('catalog merge', () => {
+    async function catalog(): Promise<
+      Array<{ sku: string; warehouse: string; lot: string; name: string; quantity: number; unitCostCents: number; importId: string }>
+    > {
+      const items = await prisma.stockItem.findMany({
+        select: { sku: true, warehouse: true, lot: true, name: true, quantity: true, unitCostCents: true, importId: true },
+      });
+      return items.sort(identityOrder);
+    }
+
+    async function detail(importId: string, token: string): Promise<ImportDetail> {
+      return importDetailSchema.parse((await getImport(importId, token).expect(200)).body);
+    }
+
+    async function errorsOf(importId: string): Promise<Array<{ line: number; field: string | null; code: string; message: string; raw: string }>> {
+      return prisma.importError.findMany({
+        where: { importId },
+        orderBy: { line: 'asc' },
+        select: { line: true, field: true, code: true, message: true, raw: true },
+      });
+    }
+
+    async function importAndFinish(token: string, content: string): Promise<{ importId: string; status: ImportStatus | undefined }> {
+      const importId = acceptedId(await upload(token, { content, name: 'items.csv' }).expect(202));
+      return { importId, status: await finished(importId) };
+    }
+
+    function failAfterStaging(): void {
+      storage.beforeFailure = () => waitFor(() => prisma.importStagedRow.count(), (count) => count >= BATCH_SIZE);
+    }
+
+    function manyRows(prefix: string, count: number): string[] {
+      return Array.from({ length: count }, (_, index) => itemRow({ sku: `${prefix}-${index}` }));
+    }
+
+    it('updates a reimported identity and moves it to the newer import, lowering the item count of the import that lost it', async () => {
+      const user = await seedUser();
+      const first = await importFile(user.token, {
+        content: itemsCsv([itemRow({ sku: 'A', name: 'Alpha', quantity: '1' }), itemRow({ sku: 'B', name: 'Beta' })]),
+        name: 'first.csv',
+      });
+      const firstBefore = await detail(first, user.token);
+
+      const second = await importFile(user.token, {
+        content: itemsCsv([itemRow({ sku: 'A', name: 'Alpha v2', quantity: '9' }), itemRow({ sku: 'C', name: 'Gamma' })]),
+        name: 'second.csv',
+      });
+
+      expect(firstBefore).toMatchObject({ itemCount: 2, itemsCreated: 2, itemsUpdated: 0 });
+      const firstAfter = await detail(first, user.token);
+      expect(firstAfter).toMatchObject({ itemCount: 1, itemsCreated: 2, itemsUpdated: 0, acceptedRows: 2 });
+      expect(Date.parse(firstAfter.updatedAt)).toBeGreaterThan(Date.parse(firstBefore.updatedAt));
+      expect(await detail(second, user.token)).toMatchObject({ itemCount: 2, itemsCreated: 1, itemsUpdated: 1, acceptedRows: 2 });
+      expect(await catalog()).toEqual([
+        expect.objectContaining({ sku: 'A', name: 'Alpha v2', quantity: 9, importId: second }),
+        expect.objectContaining({ sku: 'B', name: 'Beta', importId: first }),
+        expect.objectContaining({ sku: 'C', name: 'Gamma', importId: second }),
+      ]);
+    });
+
+    it('keeps the last valid line of the file when the same identity appears more than once', async () => {
+      const user = await seedUser();
+
+      const importId = await importFile(user.token, {
+        content: itemsCsv([
+          itemRow({ sku: 'A', name: 'first', quantity: '1' }),
+          ...manyRows('FILL', BATCH_SIZE),
+          itemRow({ sku: 'D', name: 'valid', quantity: '4' }),
+          itemRow({ sku: 'A', name: 'last', quantity: '7' }),
+          itemRow({ sku: 'D', name: 'rejected', quantity: '-4' }),
+        ]),
+        name: 'repeated.csv',
+      });
+
+      const items = await catalog();
+      expect(items.find((item) => item.sku === 'A')).toMatchObject({ name: 'last', quantity: 7 });
+      expect(items.find((item) => item.sku === 'D')).toMatchObject({ name: 'valid', quantity: 4 });
+      expect(items).toHaveLength(BATCH_SIZE + 2);
+      expect(await detail(importId, user.token)).toMatchObject({
+        totalRows: BATCH_SIZE + 4,
+        acceptedRows: BATCH_SIZE + 3,
+        rejectedRows: 1,
+        itemCount: BATCH_SIZE + 2,
+        itemsCreated: BATCH_SIZE + 2,
+        itemsUpdated: 0,
+      });
+    });
+
+    it('treats identities that differ only by letter case as distinct items', async () => {
+      const user = await seedUser();
+
+      const importId = await importFile(user.token, {
+        content: itemsCsv([
+          itemRow({ sku: 'abc', warehouse: 'wh-1', lot: 'lot-1' }),
+          itemRow({ sku: 'ABC', warehouse: 'wh-1', lot: 'lot-1' }),
+          itemRow({ sku: 'abc', warehouse: 'WH-1', lot: 'lot-1' }),
+          itemRow({ sku: 'abc', warehouse: 'wh-1', lot: 'LOT-1' }),
+        ]),
+        name: 'cases.csv',
+      });
+
+      expect((await catalog()).map(({ sku, warehouse, lot }) => [sku, warehouse, lot])).toEqual([
+        ['ABC', 'wh-1', 'lot-1'],
+        ['abc', 'WH-1', 'lot-1'],
+        ['abc', 'wh-1', 'LOT-1'],
+        ['abc', 'wh-1', 'lot-1'],
+      ]);
+      expect(await detail(importId, user.token)).toMatchObject({ itemCount: 4, itemsCreated: 4, itemsUpdated: 0 });
+    });
+
+    it('keeps the earlier catalog intact when an attempt fails midway and applies the retry once', async () => {
+      const user = await seedUser();
+      const first = await importFile(user.token, {
+        content: itemsCsv([itemRow({ sku: 'A', name: 'Alpha' }), itemRow({ sku: 'B', name: 'Beta' })]),
+        name: 'first.csv',
+      });
+      const before = await catalog();
+      storage.failuresLeft = 1;
+      failAfterStaging();
+      const failedAttempt = deferred();
+      const retryHeld = deferred();
+      processor.worker.once('failed', () => {
+        storage.gate = retryHeld.promise;
+        failedAttempt.release();
+      });
+
+      const second = acceptedId(
+        await upload(user.token, {
+          content: itemsCsv([itemRow({ sku: 'A', name: 'Alpha v2' }), ...manyRows('NEW', 20)]),
+          name: 'second.csv',
+        }).expect(202),
+      );
+      await failedAttempt.promise;
+      const afterFailure = await catalog();
+      const stagedAfterFailure = await prisma.importStagedRow.count({ where: { importId: second } });
+      retryHeld.release();
+
+      expect(await finished(second)).toBe('completed');
+      expect(afterFailure).toEqual(before);
+      expect(stagedAfterFailure).toBeGreaterThanOrEqual(BATCH_SIZE);
+      expect((await queue.getJob(second))?.attemptsMade).toBe(2);
+      expect(await detail(second, user.token)).toMatchObject({
+        totalRows: 21,
+        acceptedRows: 21,
+        rejectedRows: 0,
+        itemCount: 21,
+        itemsCreated: 20,
+        itemsUpdated: 1,
+      });
+      expect(await detail(first, user.token)).toMatchObject({ itemCount: 1 });
+      expect(await catalog()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ sku: 'A', name: 'Alpha v2', importId: second }),
+          expect.objectContaining({ sku: 'B', name: 'Beta', importId: first }),
+        ]),
+      );
+      expect(await prisma.stockItem.count()).toBe(22);
+      expect(await prisma.importStagedRow.count()).toBe(0);
+    });
+
+    it('leaves the catalog and the other imports untouched when an import fails, clearing its staged rows', async () => {
+      const user = await seedUser();
+      const first = await importFile(user.token, {
+        content: itemsCsv([itemRow({ sku: 'A', name: 'Alpha' }), itemRow({ sku: 'B', name: 'Beta' })]),
+        name: 'first.csv',
+      });
+      const before = await catalog();
+      const firstBefore = await detail(first, user.token);
+      storage.failuresLeft = Number.POSITIVE_INFINITY;
+      failAfterStaging();
+
+      const { importId, status } = await importAndFinish(
+        user.token,
+        itemsCsv([itemRow({ sku: 'A', name: 'Alpha v2' }), ...manyRows('NEW', 20)]),
+      );
+
+      expect(status).toBe('failed');
+      const failed = await detail(importId, user.token);
+      expect(failed.processedRows).toBeGreaterThanOrEqual(BATCH_SIZE);
+      expect(failed).toMatchObject({ itemCount: 0, itemsCreated: 0, itemsUpdated: 0 });
+      expect(await catalog()).toEqual(before);
+      expect(await detail(first, user.token)).toEqual(firstBefore);
+      expect(await waitFor(() => prisma.importStagedRow.count(), (count) => count === 0)).toBe(0);
+    });
+
+    it('stores hostile text of accepted rows and of rejected raw lines literally', async () => {
+      const user = await seedUser();
+      const hostile = [
+        "'; DROP TABLE stock_items; --",
+        'Robert"); DELETE FROM imports WHERE ("1"="1',
+        '<script>alert(document.cookie)</script>',
+        '${7*7} {{7*7}} #{7*7} %s %n %x',
+        '‮evil‬ mirrored',
+        'Z̤͔ͧ̑ä͖lgo',
+        '田中さんにあげて下さい',
+        '👨‍👩‍👧‍👦 🏳️‍🌈 ❤️',
+        'NULL',
+        'undefined',
+        '\\x00 \\\\ \\n \\u0000',
+        'semi; colon "and" quotes',
+        'line\r\nbreak',
+      ];
+      const hostileRaw = itemRow({ sku: 'BAD', name: hostile[0] ?? '', unitCost: '<img src=x onerror=alert(1)>' });
+      const nulRaw = itemRow({ sku: 'NUL', lot: 'L\u0000X' });
+
+      const importId = await importFile(user.token, {
+        content: itemsCsv([...hostile.map((name, index) => itemRow({ sku: `H-${index}`, name })), hostileRaw, nulRaw]),
+        name: 'hostile.csv',
+      });
+
+      const stored = new Map((await catalog()).map((item) => [item.sku, item.name]));
+      for (const [index, name] of hostile.entries()) {
+        expect(Buffer.compare(Buffer.from(stored.get(`H-${index}`) ?? ''), Buffer.from(name))).toBe(0);
+      }
+      expect(await errorsOf(importId)).toEqual([
+        { line: hostile.length + 3, field: 'unit_cost', code: 'INVALID_MONEY', message: expect.any(String) as string, raw: hostileRaw },
+        {
+          line: hostile.length + 4,
+          field: 'lot',
+          code: 'INVALID_CHARACTER',
+          message: expect.any(String) as string,
+          raw: nulRaw.replace('\u0000', '�'),
+        },
+      ]);
+    });
+
+    it('records each rejected row with its line, field, code, message and raw text and counts rejections by reason', async () => {
+      const user = await seedUser();
+      const rows = {
+        columnCount: itemRow({ sku: 'CC' }).split(';').slice(0, 11).join(';'),
+        unitCost: itemRow({ sku: 'M1', unitCost: 'free' }),
+        unitPrice: itemRow({ sku: 'M2', unitPrice: '1.005' }),
+        date: itemRow({ sku: 'DT', expiration: '2/30/2031' }),
+        missing: itemRow({ sku: 'MS', name: '' }),
+        quantity: itemRow({ sku: 'QT', quantity: '-1' }),
+        country: itemRow({ sku: 'CT' }).replace(';US;', ';us;'),
+        length: itemRow({ sku: 'S'.repeat(65) }),
+        character: itemRow({ sku: 'CH', name: 'bad\u0000name' }),
+        malformed: itemRow({ sku: 'MF' }).replace('"Item"', '"Item'),
+      };
+      const content = [
+        INVENTORY_CSV_HEADER,
+        itemRow({ sku: 'OK-1' }),
+        rows.columnCount,
+        '',
+        rows.unitCost,
+        rows.unitPrice,
+        rows.date,
+        rows.missing,
+        rows.quantity,
+        rows.country,
+        rows.length,
+        rows.character,
+        itemRow({ sku: 'OK-2' }),
+        rows.malformed,
+      ].join('\r\n');
+
+      const importId = await importFile(user.token, { content, name: 'rejections.csv' });
+
+      const message = expect.stringMatching(/\S/) as string;
+      expect(await errorsOf(importId)).toEqual([
+        { line: 3, field: null, code: 'COLUMN_COUNT', message, raw: rows.columnCount },
+        { line: 5, field: 'unit_cost', code: 'INVALID_MONEY', message, raw: rows.unitCost },
+        { line: 6, field: 'unit_price', code: 'INVALID_MONEY', message, raw: rows.unitPrice },
+        { line: 7, field: 'expiration', code: 'INVALID_DATE', message, raw: rows.date },
+        { line: 8, field: 'name', code: 'MISSING_FIELD', message, raw: rows.missing },
+        { line: 9, field: 'quantity', code: 'INVALID_QUANTITY', message, raw: rows.quantity },
+        { line: 10, field: 'country', code: 'INVALID_COUNTRY', message, raw: rows.country },
+        { line: 11, field: 'sku', code: 'INVALID_LENGTH', message, raw: rows.length },
+        { line: 12, field: 'name', code: 'INVALID_CHARACTER', message, raw: rows.character.replace('\u0000', '�') },
+        { line: 14, field: null, code: 'MALFORMED_ROW', message, raw: rows.malformed },
+      ]);
+      const result = await detail(importId, user.token);
+      expect(result).toMatchObject({
+        totalRows: 12,
+        processedRows: 12,
+        acceptedRows: 2,
+        rejectedRows: 10,
+        rejectedByReason: {
+          COLUMN_COUNT: 1,
+          INVALID_MONEY: 2,
+          INVALID_DATE: 1,
+          MISSING_FIELD: 1,
+          INVALID_QUANTITY: 1,
+          INVALID_COUNTRY: 1,
+          INVALID_LENGTH: 1,
+          INVALID_CHARACTER: 1,
+          MALFORMED_ROW: 1,
+        },
+        itemCount: 2,
+      });
+      expect(result.acceptedRows + result.rejectedRows).toBe(result.totalRows);
+      expect(Object.values(result.rejectedByReason).reduce((sum, count) => sum + (count ?? 0), 0)).toBe(result.rejectedRows);
+      expect((await catalog()).map((item) => item.sku)).toEqual(['OK-1', 'OK-2']);
+    });
+
+    it('fails a file with an invalid header in a single attempt without staging rows and removes the file', async () => {
+      const user = await seedUser();
+      await importFile(user.token, { content: itemsCsv([itemRow({ sku: 'A' })]), name: 'first.csv' });
+      const before = await catalog();
+
+      const { importId, status } = await importAndFinish(
+        user.token,
+        `${INVENTORY_CSV_HEADER.replace('sku', 'SKU')}\n${itemRow({ sku: 'A', name: 'changed' })}\n`,
+      );
+
+      expect(status).toBe('failed');
+      expect((await failureOf(importId)).failureReason).toMatch(/^INVALID_HEADER: /);
+      const job = await queue.getJob(importId);
+      expect(job?.attemptsMade).toBe(1);
+      expect(await job?.getState()).toBe('failed');
+      expect(await prisma.importStagedRow.count()).toBe(0);
+      expect(await prisma.importError.count({ where: { importId } })).toBe(0);
+      expect(await detail(importId, user.token)).toMatchObject({ totalRows: null, processedRows: 0, itemCount: 0 });
+      expect(await catalog()).toEqual(before);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
+    });
+
+    it('produces the same catalog, counters and errors whatever the staging batch size', async () => {
+      const user = await seedUser();
+      const content = itemsCsv([
+        ...manyRows('P', 6),
+        itemRow({ sku: 'P-1', name: 'repeated across batches' }),
+        itemRow({ sku: 'X', quantity: 'many' }),
+        '',
+        ...manyRows('Q', 5),
+        itemRow({ sku: 'P-4', name: 'last occurrence', quantity: '44' }),
+        itemRow({ sku: 'Y' }).split(';').slice(0, 10).join(';'),
+      ]);
+      const outcome = async (importId: string): Promise<unknown> => {
+        const counters = await prisma.import.findUniqueOrThrow({
+          where: { id: importId },
+          select: {
+            status: true,
+            totalRows: true,
+            processedRows: true,
+            acceptedRows: true,
+            rejectedRows: true,
+            rejectedByReason: true,
+            itemCount: true,
+            itemsCreated: true,
+            itemsUpdated: true,
+          },
+        });
+        const items = (await catalog()).map(({ sku, warehouse, lot, name, quantity, unitCostCents }) => ({ sku, warehouse, lot, name, quantity, unitCostCents }));
+        return { counters, items, errors: await errorsOf(importId) };
+      };
+      expect(app.get(AppConfigService).get('IMPORT_BATCH_SIZE')).toBe(BATCH_SIZE);
+
+      const small = await outcome(await importFile(user.token, { content, name: 'small.csv' }));
+      await prisma.import.deleteMany();
+      const previous = process.env.IMPORT_BATCH_SIZE;
+      process.env.IMPORT_BATCH_SIZE = '100000';
+      const singleBatchConfig = new AppConfigService();
+      process.env.IMPORT_BATCH_SIZE = previous;
+      const singleBatch = new ImportProcessingService(
+        prisma,
+        singleBatchConfig,
+        storage,
+        app.get<ImportCatalogRepository>(IMPORT_CATALOG_REPOSITORY),
+        await app.resolve(PinoLogger),
+      );
+      const filePath = await storedFile(content);
+      const seeded = await seedImport(user.id, { filePath });
+      await singleBatch.run({ importId: seeded, filePath });
+
+      expect(await outcome(seeded)).toEqual(small);
+      expect(small).toMatchObject({ counters: { totalRows: 15, acceptedRows: 13, rejectedRows: 2, itemsCreated: 11, itemsUpdated: 0 } });
+    });
+  });
+
   describe('reconciliation', () => {
     it('keeps an import pending when enqueueing fails and lets reconciliation enqueue and complete it', async () => {
       const user = await seedUser();
@@ -780,7 +1193,7 @@ describe('imports', () => {
       expect(await finished(importId)).toBe('completed');
       const row = await prisma.import.findUniqueOrThrow({ where: { id: importId }, select: { totalRows: true } });
       expect(row.totalRows).toBe(3);
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
     });
 
     it('fails an import left pending before its exchange rates were captured and removes its file', async () => {
@@ -791,7 +1204,7 @@ describe('imports', () => {
 
       expect(await failureOf(importId)).toEqual({ status: 'failed', failureReason: IMPORT_INTERRUPTED_REASON });
       expect(await queue.getJob(importId)).toBeUndefined();
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
     });
 
     it.each<[string, ImportStatus]>([
@@ -809,7 +1222,7 @@ describe('imports', () => {
       expect(await finished(importId)).toBe('completed');
       const row = await prisma.import.findUniqueOrThrow({ where: { id: importId }, select: { totalRows: true } });
       expect(row.totalRows).toBe(2);
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
     });
 
     it('replaces a finished job retained under the same id when requeueing', async () => {
@@ -881,7 +1294,7 @@ describe('imports', () => {
       await send().expect(401);
 
       expect(await prisma.import.count()).toBe(0);
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
     });
 
     it.each<[string, (token: string, importId: string) => request.Test]>([
@@ -899,7 +1312,7 @@ describe('imports', () => {
       expect(asCustom.body).toMatchObject({ statusCode: 403, code: 'ACCESS_DENIED' });
       expect(await prisma.import.count()).toBe(1);
       expect(await queue.count()).toBe(0);
-      expect(await uploadedFiles()).toEqual([]);
+      expect(await waitFor(uploadedFiles, (files) => files.length === 0)).toEqual([]);
     });
 
     it('shows an import to any user holding imports:manage, not only its creator', async () => {

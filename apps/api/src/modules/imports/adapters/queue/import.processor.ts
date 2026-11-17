@@ -1,9 +1,11 @@
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { OnApplicationBootstrap } from '@nestjs/common';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { PinoLogger } from 'nestjs-pino';
 import { AppConfigService } from '../../../../infra/config/app-config.service';
 import { ImportProcessingService } from '../../application/import-processing.service';
+import { failureReason } from '../../application/imports.errors';
+import { InvalidHeaderError } from '../../domain/inventory-csv-parser';
 import { importJobPayloadSchema } from '../../ports/import-queue';
 import { IMPORTS_QUEUE } from './imports-queue.constants';
 
@@ -37,7 +39,14 @@ export class ImportProcessor extends WorkerHost implements OnApplicationBootstra
     const payload = importJobPayloadSchema.parse(job.data);
     this.logger.info({ importId: payload.importId, attempt: job.attemptsMade + 1 }, 'Import job started');
 
-    await this.processing.run(payload);
+    try {
+      await this.processing.run(payload);
+    } catch (error) {
+      if (error instanceof InvalidHeaderError) {
+        throw new UnrecoverableError(failureReason(error));
+      }
+      throw error;
+    }
   }
 
   @OnWorkerEvent('failed')

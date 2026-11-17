@@ -11,6 +11,8 @@ export const JWT_SECRET_PLACEHOLDER = 'replace-me-with-the-output-of-openssl-ran
 
 export const DEFAULT_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
 
+export const DEFAULT_IMPORT_BATCH_SIZE = 2000;
+
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -28,6 +30,7 @@ export const envSchema = z.object({
     .default(join(tmpdir(), 'stockpile-uploads'))
     .transform((value) => resolve(value)),
   UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(DEFAULT_UPLOAD_MAX_BYTES),
+  IMPORT_BATCH_SIZE: z.coerce.number().int().positive().default(DEFAULT_IMPORT_BATCH_SIZE),
   IMPORT_CONCURRENCY: z.coerce.number().int().positive().default(2),
   IMPORT_JOB_ATTEMPTS: z.coerce.number().int().positive().default(3),
   IMPORT_JOB_BACKOFF_MS: z.coerce.number().int().positive().default(1000),

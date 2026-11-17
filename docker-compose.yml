@@ -56,6 +56,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-stockpile}:${POSTGRES_PASSWORD:-stockpile}@postgres:5432/${POSTGRES_DB:-stockpile}
       REDIS_URL: redis://redis:6379
       PORT: 3000
+      TZ: UTC
       LOG_LEVEL: ${LOG_LEVEL:-info}
       EXCHANGE_CURRENCIES: ${EXCHANGE_CURRENCIES:-EUR,GBP,JPY,CNY,CAD,BRL,COP}
       JWT_SECRET: ${JWT_SECRET:-}
@@ -89,10 +90,12 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-stockpile}:${POSTGRES_PASSWORD:-stockpile}@postgres:5432/${POSTGRES_DB:-stockpile}
       REDIS_URL: redis://redis:6379
+      TZ: UTC
       LOG_LEVEL: ${LOG_LEVEL:-info}
       EXCHANGE_CURRENCIES: ${EXCHANGE_CURRENCIES:-EUR,GBP,JPY,CNY,CAD,BRL,COP}
       JWT_SECRET: ${JWT_SECRET:-}
       UPLOAD_DIR: /app/apps/api/uploads
+      IMPORT_BATCH_SIZE: ${IMPORT_BATCH_SIZE:-2000}
       IMPORT_CONCURRENCY: ${IMPORT_CONCURRENCY:-2}
       IMPORT_JOB_ATTEMPTS: ${IMPORT_JOB_ATTEMPTS:-3}
       IMPORT_JOB_BACKOFF_MS: ${IMPORT_JOB_BACKOFF_MS:-1000}
