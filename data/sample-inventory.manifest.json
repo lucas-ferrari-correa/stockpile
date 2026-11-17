@@ -19,5 +19,5 @@
   },
   "distinctIdentities": 1735,
   "expectedCreated": 1735,
-  "expectedUpdated": 165
+  "repeatedIdentityRows": 165
 }

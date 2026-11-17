@@ -39,7 +39,7 @@ interface Manifest {
   rejectedByReason: Record<InventoryRejectionCode, number>;
   distinctIdentities: number;
   expectedCreated: number;
-  expectedUpdated: number;
+  repeatedIdentityRows: number;
 }
 
 interface Fields {
@@ -546,7 +546,7 @@ async function generate(options: Options): Promise<Manifest> {
     rejectedByReason: reasons,
     distinctIdentities: identities.size,
     expectedCreated: identities.size,
-    expectedUpdated: accepted - identities.size,
+    repeatedIdentityRows: accepted - identities.size,
   };
   await writeFile(manifestPath(options.out), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;

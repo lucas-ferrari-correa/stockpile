@@ -23,7 +23,7 @@ interface DatasetManifest {
   rejectedByReason: Record<InventoryRejectionCode, number>;
   distinctIdentities: number;
   expectedCreated: number;
-  expectedUpdated: number;
+  repeatedIdentityRows: number;
 }
 
 interface ReconciledCounts {
@@ -137,7 +137,7 @@ describe('generate-dataset', () => {
       rejectedByReason: manifest.rejectedByReason,
       distinctIdentities: manifest.expectedCreated,
     });
-    expect(manifest.expectedCreated + manifest.expectedUpdated).toBe(manifest.accepted);
+    expect(manifest.expectedCreated + manifest.repeatedIdentityRows).toBe(manifest.accepted);
   }, 60_000);
 });
 
@@ -161,8 +161,9 @@ describe('committed sample dataset', () => {
     }
   });
 
-  it('matches the expected created and updated identities', () => {
+  it('matches the distinct identities and the accepted rows repeating an identity of the same file', () => {
     expect(counts.distinctIdentities).toBe(manifest.expectedCreated);
-    expect(manifest.expectedCreated + manifest.expectedUpdated).toBe(manifest.accepted);
+    expect(manifest.repeatedIdentityRows).toBeGreaterThanOrEqual(1);
+    expect(manifest.expectedCreated + manifest.repeatedIdentityRows).toBe(manifest.accepted);
   });
 });
