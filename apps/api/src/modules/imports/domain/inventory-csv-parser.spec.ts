@@ -142,10 +142,17 @@ describe('parseInventoryCsv', () => {
     expect(await parseByteByByte(content)).toEqual(await parseText(content));
   });
 
-  it('accepts a stray quote inside an unquoted field as a literal character', async () => {
-    const parsed = await parseText(`${INVENTORY_CSV_HEADER}\n${row({ name: '12" ruler', brand: 'O"Brien' })}\n`);
+  it('rejects a stray quote inside an unquoted field as a malformed row and keeps parsing the next lines', async () => {
+    const stray = row({ name: '12" ruler' });
+    const parsed = await parseText(`${INVENTORY_CSV_HEADER}\r\n${row()}\r\n${stray}\r\n${row({ sku: 'NEXT' })}\r\n`);
 
-    expect(accepted(parsed).row).toMatchObject({ name: '12" ruler', brand: 'O"Brien' });
+    expect(summary(parsed)).toEqual([
+      [2, 'accepted'],
+      [3, 'MALFORMED_ROW'],
+      [4, 'accepted'],
+    ]);
+    expect(parsed[1]).toMatchObject({ field: null, raw: stray });
+    expect(parsed[1]?.ok === false && parsed[1].message).toMatch(/quote.*name/i);
   });
 
   it('unescapes doubled quotes and keeps the delimiter inside a quoted field', async () => {
@@ -169,14 +176,27 @@ describe('parseInventoryCsv', () => {
     expect(parsed[1]).toMatchObject({ field: null, raw: record });
   });
 
-  it('keeps text after a closing quote literally instead of rejecting the row', async () => {
-    const parsed = await parseText(`${INVENTORY_CSV_HEADER}\n${row({ name: '"Closed"tail' })}\n${row({ sku: 'NEXT' })}\n`);
+  it('rejects text after a closing quote as a malformed row without swallowing the following lines', async () => {
+    const tail = row({ name: '"Closed"tail' });
+    const parsed = await parseText(`${INVENTORY_CSV_HEADER}\n${tail}\n${row({ sku: 'NEXT' })}\n`);
+
+    expect(summary(parsed)).toEqual([
+      [2, 'MALFORMED_ROW'],
+      [3, 'accepted'],
+    ]);
+    expect(parsed[0]).toMatchObject({ field: null, raw: tail });
+  });
+
+  it('reports a malformed row after a multi-line quoted field at its own physical line', async () => {
+    const stray = row({ brand: 'O"Brien' });
+    const parsed = await parseText(`${INVENTORY_CSV_HEADER}\n${row({ name: '"Two\nlines"' })}\n${stray}\n${row()}\n`);
 
     expect(summary(parsed)).toEqual([
       [2, 'accepted'],
-      [3, 'accepted'],
+      [4, 'MALFORMED_ROW'],
+      [5, 'accepted'],
     ]);
-    expect(accepted(parsed).row.name).toBe('"Closed"tail');
+    expect(parsed[1]).toMatchObject({ raw: stray });
   });
 
   it('rejects a quote left open until the end of the file as one malformed row starting at its physical line', async () => {

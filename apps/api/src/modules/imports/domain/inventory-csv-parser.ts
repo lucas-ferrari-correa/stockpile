@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream';
 import {
+  INVENTORY_CSV_COLUMNS,
   INVENTORY_CSV_DELIMITER,
   INVENTORY_CSV_HEADER,
   InventoryCsvColumn,
@@ -9,10 +10,12 @@ import {
   isInventoryCsvHeader,
 } from '@stockpile/shared';
 import { CsvError, parse } from 'csv-parse';
+import { parse as parseSync } from 'csv-parse/sync';
 import { z } from 'zod';
 import { CsvLineTracker, trimLineBreaks } from './csv-line-tracker';
 
 const RECORD_DELIMITERS = ['\r\n', '\n', '\r'];
+const QUOTE = '"';
 
 export interface AcceptedInventoryLine {
   ok: true;
@@ -46,6 +49,11 @@ const parsedRecordSchema = z.object({
   info: z.object({ lines: z.number().int() }),
 });
 
+const quoteErrorSchema = z.object({
+  code: z.string(),
+  column: z.number().int().nonnegative().optional(),
+});
+
 interface PendingSkip {
   parserLine: number;
   raw: string;
@@ -61,6 +69,30 @@ function toPendingSkip(error: CsvError): PendingSkip {
     raw: typeof raw === 'string' ? raw : '',
     message: error.message,
   };
+}
+
+function quoteViolation(raw: string): string | null {
+  if (!raw.includes(QUOTE)) {
+    return null;
+  }
+
+  try {
+    parseSync(raw, {
+      delimiter: INVENTORY_CSV_DELIMITER,
+      record_delimiter: RECORD_DELIMITERS,
+      relax_column_count: true,
+    });
+    return null;
+  } catch (error: unknown) {
+    const parsed = quoteErrorSchema.safeParse(error);
+    if (!parsed.success) {
+      throw error;
+    }
+    const { code, column } = parsed.data;
+    const name = column === undefined ? undefined : INVENTORY_CSV_COLUMNS[column];
+
+    return name === undefined ? `Invalid quote (${code})` : `Invalid quote in field "${name}" (${code})`;
+  }
 }
 
 export async function* parseInventoryCsv(source: Readable): AsyncGenerator<ParsedInventoryLine> {
@@ -115,12 +147,22 @@ export async function* parseInventoryCsv(source: Readable): AsyncGenerator<Parse
 
       yield* drainSkips(chunk.info.lines);
       const line = lines.recordStartLine(chunk.record, chunk.info.lines);
+      const raw = trimLineBreaks(chunk.raw);
+      const violation = quoteViolation(raw);
 
       if (!headerSeen) {
+        if (violation !== null) {
+          throw new InvalidHeaderError([raw]);
+        }
         if (!isInventoryCsvHeader(chunk.record)) {
           throw new InvalidHeaderError(chunk.record);
         }
         headerSeen = true;
+        continue;
+      }
+
+      if (violation !== null) {
+        yield { ok: false, line, field: null, code: 'MALFORMED_ROW', message: violation, raw };
         continue;
       }
 
@@ -134,7 +176,7 @@ export async function* parseInventoryCsv(source: Readable): AsyncGenerator<Parse
           field: result.field,
           code: result.code,
           message: result.message,
-          raw: trimLineBreaks(chunk.raw),
+          raw,
         };
       }
     }
