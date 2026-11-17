@@ -1,5 +1,14 @@
 import { z } from 'zod';
-import { authRoleSchema, emailSchema, newPasswordSchema, userNameSchema, userStatusSchema } from '../auth';
+import { authRoleSchema, emailSchema, newPasswordSchema, userNameSchema, userStatusSchema, type UserStatus } from '../auth';
+import {
+  listingFilterValues,
+  listingLimitSchema,
+  listingQuerySchema,
+  refineCreatedRange,
+  sortOrderSchema,
+  type FilterParam,
+  type ListingQueryParams,
+} from '../listing';
 
 export const ACCESS_REQUEST_ACCEPTED_MESSAGE =
   'If the request can be accepted, an administrator will review it. You will be able to sign in once it is approved.';
@@ -28,13 +37,28 @@ export const userIdParamSchema = z.object({
 
 export type UserIdParam = z.infer<typeof userIdParamSchema>;
 
-export const userListQuerySchema = z.object({
-  status: userStatusSchema.optional(),
-  cursor: z.uuid().optional(),
-  limit: z.coerce.number().int().min(1).max(USER_LIST_MAX_LIMIT).default(USER_LIST_DEFAULT_LIMIT),
-});
+export const USER_SORTS = ['name', 'email', 'status', 'createdAt'] as const;
+
+export const userSortSchema = z.enum(USER_SORTS);
+
+export type UserSort = z.infer<typeof userSortSchema>;
+
+export const userListQuerySchema = listingQuerySchema
+  .extend({
+    sort: userSortSchema.default('createdAt'),
+    order: sortOrderSchema.default('desc'),
+    limit: listingLimitSchema(USER_LIST_MAX_LIMIT, USER_LIST_DEFAULT_LIMIT),
+    status: listingFilterValues(userStatusSchema).optional(),
+    roleId: listingFilterValues(z.uuid()).optional(),
+  })
+  .superRefine(refineCreatedRange);
 
 export type UserListQuery = z.infer<typeof userListQuerySchema>;
+
+export interface UserListQueryParams extends ListingQueryParams<UserSort> {
+  status?: FilterParam<UserStatus>;
+  roleId?: FilterParam<string>;
+}
 
 export const approveUserSchema = z.object({
   roleId: z.uuid(),
@@ -63,7 +87,8 @@ export type UserListItem = z.infer<typeof userListItemSchema>;
 
 export const userPageSchema = z.object({
   items: z.array(userListItemSchema),
-  nextCursor: z.uuid().nullable(),
+  nextCursor: z.string().nullable(),
+  total: z.number().int().nonnegative().nullable(),
 });
 
 export type UserPage = z.infer<typeof userPageSchema>;
