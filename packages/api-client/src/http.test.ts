@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHttpClient, type FetchLike, type HttpClient } from './http';
+import type { StockItemPage } from '@stockpile/shared';
 import { HttpError } from './http-error';
+import { listingPath, listingSearchParams } from './listing';
 import { createRole, deleteRole, getRole, listRoles, updateRole } from './roles';
+import { stockItemsInfiniteQueryOptions, stockItemsQueryKeys, stockItemsQueryOptions } from './stock-items';
 
 interface RecordedCall {
   url: string;
@@ -136,5 +139,84 @@ describe('roles fetchers', () => {
     expect(calls[0]?.url).toBe(`http://api.test${path}`);
     expect(calls[0]?.init?.method).toBe(method);
     expect(calls[0]?.init?.body).toBe(body === undefined ? undefined : JSON.stringify(body));
+  });
+});
+
+describe('listing serializer', () => {
+  it('repeats multivalue parameters, stringifies scalars and drops empty values', () => {
+    const search = listingSearchParams({
+      q: 'cheese',
+      category: ['Dairy', '', 'Bakery'],
+      limit: 25,
+      archived: false,
+      cursor: undefined,
+      brand: null,
+      supplier: '',
+      warehouse: [],
+    });
+
+    expect(search.toString()).toBe('q=cheese&category=Dairy&category=Bakery&limit=25&archived=false');
+  });
+
+  it('ignores nested objects instead of serializing them', () => {
+    expect(listingSearchParams({ sort: 'sku', range: { from: 1 }, values: [{ id: 1 }, 'kept'] }).toString()).toBe('sort=sku&values=kept');
+  });
+
+  it('builds a path with an encoded query string, or the bare path when nothing remains', () => {
+    expect(listingPath('/stock-items', { q: '50% off & more', minPrice: '12.50' })).toBe('/stock-items?q=50%25+off+%26+more&minPrice=12.50');
+    expect(listingPath('/stock-items', { q: '', cursor: undefined, category: [] })).toBe('/stock-items');
+  });
+});
+
+describe('stock items query options', () => {
+  const PAGE: StockItemPage = { items: [], nextCursor: 'next-cursor', total: 0 };
+
+  function pageClient(pages: StockItemPage[] = [PAGE]): { client: HttpClient; calls: RecordedCall[] } {
+    const queue = [...pages];
+    const { fetch, calls } = fakeFetch(() => jsonResponse(200, queue.shift() ?? PAGE));
+    return { client: createHttpClient({ baseUrl: 'http://api.test', fetch }), calls };
+  }
+
+  it('keys single pages and infinite lists apart under the shared stock items prefix', () => {
+    const params = { importId: 'import-1', category: ['Dairy'], sort: 'name' as const };
+
+    const list = stockItemsQueryKeys.list(params);
+    const infinite = stockItemsQueryKeys.listInfinite(params);
+
+    expect(list).toEqual(['stock-items', 'list', params]);
+    expect(infinite).toEqual(['stock-items', 'list', 'infinite', params]);
+    expect(list.slice(0, 1)).toEqual(stockItemsQueryKeys.all);
+    expect(stockItemsQueryKeys.list({ sort: 'sku' })).not.toEqual(list);
+  });
+
+  it('fetches one page with the serialized filters and forwards the abort signal', async () => {
+    const { client, calls } = pageClient();
+    const controller = new AbortController();
+    const options = stockItemsQueryOptions(client, { category: ['Dairy', 'Bakery'], minPrice: '2.50', expiration: 'none', limit: 10 });
+
+    const result = await options.queryFn({ signal: controller.signal });
+
+    expect(result).toEqual(PAGE);
+    expect(options.queryKey).toEqual(stockItemsQueryKeys.list({ category: ['Dairy', 'Bakery'], minPrice: '2.50', expiration: 'none', limit: 10 }));
+    expect(calls[0]?.url).toBe('http://api.test/stock-items?category=Dairy&category=Bakery&minPrice=2.50&expiration=none&limit=10');
+    expect(calls[0]?.init?.method).toBe('GET');
+    expect(calls[0]?.init?.signal).toBe(controller.signal);
+  });
+
+  it('starts an infinite list without a cursor and passes each next cursor back until the last page', async () => {
+    const last: StockItemPage = { items: [], nextCursor: null, total: null };
+    const { client, calls } = pageClient([PAGE, last]);
+    const options = stockItemsInfiniteQueryOptions(client, { sort: 'unitPrice', order: 'desc' });
+    const signal = new AbortController().signal;
+
+    const first = await options.queryFn({ pageParam: options.initialPageParam, signal });
+    const second = await options.queryFn({ pageParam: options.getNextPageParam(first), signal });
+
+    expect(options.initialPageParam).toBeUndefined();
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://api.test/stock-items?sort=unitPrice&order=desc',
+      'http://api.test/stock-items?sort=unitPrice&order=desc&cursor=next-cursor',
+    ]);
+    expect(options.getNextPageParam(second)).toBeUndefined();
   });
 });
