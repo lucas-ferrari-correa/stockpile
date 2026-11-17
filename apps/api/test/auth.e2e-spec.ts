@@ -169,7 +169,7 @@ describe('auth', () => {
 
       const me = meResponseSchema.parse(response.body);
       expect(me).toMatchObject({ id: user.id, email: user.email, status: 'ACTIVE', role: { id: roles.viewerRoleId, name: 'viewer' } });
-      expect([...me.permissions].sort()).toEqual(['dashboard:view', 'inventory:read']);
+      expect(me.permissions).toEqual(['dashboard:view', 'inventory:read']);
     });
 
     it('accepts the email regardless of letter case and surrounding spaces', async () => {
@@ -449,7 +449,7 @@ describe('auth', () => {
   describe('rate limit', () => {
     const LOGIN_LIMIT = 3;
     const ACCESS_REQUEST_LIMIT = 2;
-    const SHORT_TTL_MS = 1000;
+    const SHORT_TTL_MS = 5000;
     const limits: RateLimitEnv = {
       THROTTLE_LOGIN_LIMIT: String(LOGIN_LIMIT),
       THROTTLE_LOGIN_TTL_MS: '60000',
@@ -518,11 +518,13 @@ describe('auth', () => {
       await exhaustLogin(shortWindow);
       const blocked = await attempt(shortWindow);
       expectRateLimited(blocked);
+      const retryAfterMs = Number(blocked.headers['retry-after']) * 1000;
+      expect(retryAfterMs).toBeLessThanOrEqual(SHORT_TTL_MS);
 
-      await new Promise((resolve) => setTimeout(resolve, SHORT_TTL_MS + 200));
+      await new Promise((resolve) => setTimeout(resolve, retryAfterMs + 250));
 
       await attempt(shortWindow).expect(401);
-    });
+    }, SHORT_TTL_MS * 4);
 
     it('shares the attempt count between instances backed by the same redis', async () => {
       for (let index = 0; index < LOGIN_LIMIT; index += 1) {

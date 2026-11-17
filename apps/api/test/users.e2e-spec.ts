@@ -1,11 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import {
   ACCESS_REQUEST_ACCEPTED_MESSAGE,
   PERMISSIONS,
   Permission,
+  SortOrder,
+  USER_SORTS,
   UserError,
+  UserPage,
+  UserSort,
   UserStatus,
   authErrorSchema,
   loginResponseSchema,
@@ -49,8 +54,18 @@ const LIST_ITEM_KEYS = ['createdAt', 'deletedAt', 'email', 'id', 'name', 'reRequ
 
 const ACCESS_REQUESTED_BODY = { code: 'ACCESS_REQUESTED', message: ACCESS_REQUEST_ACCEPTED_MESSAGE };
 
+const USER_ORDER_BY: Record<UserSort, (order: SortOrder) => Prisma.UserOrderByWithRelationInput> = {
+  name: (name) => ({ name }),
+  email: (email) => ({ email }),
+  status: (status) => ({ status }),
+  createdAt: (createdAt) => ({ createdAt }),
+};
+
+type ListQuery = Readonly<Record<string, string | number | readonly string[]>>;
+
 interface UserSeed {
   name?: string;
+  email?: string;
   status?: UserStatus;
   roleId?: string | null;
   createdAt?: Date;
@@ -98,7 +113,7 @@ describe('users', () => {
     return prisma.user.create({
       data: {
         name: seed.name ?? 'Stock Keeper',
-        email: `${randomUUID()}@example.test`,
+        email: seed.email ?? `${randomUUID()}@example.test`,
         passwordHash,
         status: seed.status ?? 'ACTIVE',
         roleId: seed.roleId === undefined ? viewerRoleId : seed.roleId,
@@ -143,7 +158,7 @@ describe('users', () => {
     return token === undefined ? withBody : withBody.auth(token, { type: 'bearer' });
   }
 
-  function listUsers(token?: string, query: Record<string, string | number> = {}): request.Test {
+  function listUsers(token?: string, query: ListQuery = {}): request.Test {
     const pending = request(app.getHttpServer()).get('/users').query(query);
     return token === undefined ? pending : pending.auth(token, { type: 'bearer' });
   }
@@ -217,7 +232,7 @@ describe('users', () => {
       const session = await me(await tokenFor('new.person@example.test', REQUESTED_PASSWORD)).expect(200);
       const profile = meResponseSchema.parse(session.body);
       expect(profile.role.id).toBe(chosenRoleId);
-      expect([...profile.permissions].sort()).toEqual(['imports:manage', 'inventory:read']);
+      expect(profile.permissions).toEqual(['imports:manage', 'inventory:read']);
       expect(await eventsOf(created.id)).toEqual([
         { type: 'REQUESTED', actorId: null, reRegistration: false },
         { type: 'APPROVED', actorId: governor.id, reRegistration: false },
@@ -671,42 +686,99 @@ describe('users', () => {
   });
 
   describe('listing', () => {
-    it('pages newest first without repeating or skipping users, even when creation times tie', async () => {
-      const governor = await seedUser({
-        roleId: await createRole(GOVERNANCE),
-        createdAt: new Date('2026-01-01T00:00:00.000Z'),
-      });
-      const token = await tokenFor(governor.email);
+    async function walkUsers(token: string, query: ListQuery): Promise<UserPage[]> {
+      const pages: UserPage[] = [];
+      let cursor: string | null = null;
+      do {
+        const response = await listUsers(token, cursor === null ? query : { ...query, cursor }).expect(200);
+        pages.push(userPageSchema.parse(response.body));
+        cursor = pages.at(-1)?.nextCursor ?? null;
+        if (pages.length > 50) {
+          throw new Error('Pagination did not terminate');
+        }
+      } while (cursor !== null);
+      return pages;
+    }
+
+    async function seedSortable(): Promise<string> {
+      const governor = await seedUser({ name: 'Governor', roleId: await createRole(GOVERNANCE), createdAt: new Date('2026-01-01T00:00:00.000Z') });
       const tied = new Date('2026-03-01T00:00:00.000Z');
-      await seedUser({ createdAt: new Date('2026-04-01T00:00:00.000Z') });
-      await seedUser({ createdAt: tied });
-      await seedUser({ createdAt: tied });
-      await seedUser({ createdAt: tied });
-      await seedUser({ createdAt: new Date('2026-02-01T00:00:00.000Z') });
+      await seedUser({ name: 'Bruno', createdAt: tied });
+      await seedUser({ name: 'Bruno', status: 'PENDING', roleId: null, createdAt: tied });
+      await seedUser({ name: 'Ana', status: 'BLOCKED', createdAt: new Date('2026-04-01T00:00:00.000Z') });
+      await seedUser({ name: 'Carla', status: 'DELETED', deletedAt: EARLIER_DELETION, createdAt: tied });
+      await seedUser({ name: 'Ana', status: 'REJECTED', roleId: null, createdAt: new Date('2026-02-01T00:00:00.000Z') });
+      await seedUser({ name: 'Dora', status: 'PENDING', roleId: null, createdAt: tied });
+      return tokenFor(governor.email);
+    }
+
+    it.each<[string, UserSort | undefined, SortOrder | undefined]>([
+      ['the default newest first', undefined, undefined],
+      ...USER_SORTS.flatMap((sort) => (['asc', 'desc'] as const).map((order): [string, UserSort, SortOrder] => [`${sort} ${order}`, sort, order])),
+    ])('pages by %s through every user once, breaking ties by id, with total only on the first page', async (_, sort, order) => {
+      const token = await seedSortable();
+      const effectiveSort = sort ?? 'createdAt';
+      const effectiveOrder = order ?? 'desc';
       const expected = await prisma.user.findMany({
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: [USER_ORDER_BY[effectiveSort](effectiveOrder), { id: effectiveOrder }],
         select: { id: true },
       });
 
-      const seen: string[] = [];
-      let cursor: string | null = null;
-      let pages = 0;
-      do {
-        const query: Record<string, string | number> = cursor === null ? { limit: 2 } : { limit: 2, cursor };
-        const response = await listUsers(token, query).expect(200);
-        const page = userPageSchema.parse(response.body);
-        expect(page.items.length).toBeLessThanOrEqual(2);
-        for (const item of page.items) {
-          expect(Object.keys(item).sort()).toEqual(LIST_ITEM_KEYS);
-        }
-        seen.push(...page.items.map((item) => item.id));
-        cursor = page.nextCursor;
-        pages++;
-      } while (cursor !== null && pages < 10);
+      const pages = await walkUsers(token, { limit: 2, ...(sort === undefined ? {} : { sort }), ...(order === undefined ? {} : { order }) });
 
-      expect(pages).toBe(3);
-      expect(seen).toEqual(expected.map((user) => user.id));
-      expect(seen.at(-1)).toBe(governor.id);
+      for (const item of pages.flatMap((current) => current.items)) {
+        expect(Object.keys(item).sort()).toEqual(LIST_ITEM_KEYS);
+      }
+      expect(pages.flatMap((current) => current.items.map((item) => item.id))).toEqual(expected.map((user) => user.id));
+      expect(pages.map((current) => current.total)).toEqual([expected.length, ...pages.slice(1).map(() => null)]);
+    });
+
+    describe('filters and search', () => {
+      let token: string;
+      let northRoleId: string;
+      let southRoleId: string;
+
+      beforeEach(async () => {
+        northRoleId = await createRole(['inventory:read']);
+        southRoleId = await createRole(['imports:manage']);
+        const governor = await seedUser({ name: 'Governor', roleId: await createRole(GOVERNANCE), createdAt: new Date('2026-01-01T00:00:00.000Z') });
+        token = await tokenFor(governor.email);
+        await seedUser({ name: 'Maria Silva', email: 'maria.silva@north.example', roleId: northRoleId, createdAt: new Date('2026-05-01T00:00:00.000Z') });
+        await seedUser({ name: 'Mario Rossi', email: 'mrossi@south.example', status: 'BLOCKED', roleId: southRoleId, createdAt: new Date('2026-05-02T00:00:00.000Z') });
+        await seedUser({ name: 'Paula', email: 'paula@north.example', status: 'PENDING', roleId: null, createdAt: new Date('2026-10-27T23:30:00.000Z') });
+        await seedUser({ name: 'Pedro', email: 'pedro@south.example', status: 'REJECTED', roleId: null, createdAt: new Date('2026-10-28T12:00:00.000Z') });
+        await seedUser({ name: 'Zed', email: 'zed@west.example', createdAt: new Date('2026-06-01T00:00:00.000Z') });
+      });
+
+      it.each<[string, () => ListQuery, string[]]>([
+        ['several statuses', () => ({ status: ['BLOCKED', 'PENDING'] }), ['Mario Rossi', 'Paula']],
+        ['several roles', () => ({ roleId: [northRoleId, southRoleId] }), ['Maria Silva', 'Mario Rossi']],
+        ['a status and roles together', () => ({ status: 'ACTIVE', roleId: [northRoleId, viewerRoleId] }), ['Maria Silva', 'Zed']],
+        ['a name fragment in any case', () => ({ q: 'MARI' }), ['Maria Silva', 'Mario Rossi']],
+        ['an email fragment', () => ({ q: 'north.example' }), ['Maria Silva', 'Paula']],
+        ['a status fragment', () => ({ q: 'pend' }), ['Paula']],
+        ['a creation day in UTC', () => ({ q: '10/27/2026' }), ['Paula']],
+        ['a creation day in another time zone', () => ({ q: '10/28/2026', tz: 'Asia/Tokyo' }), ['Paula', 'Pedro']],
+        ['a creation month', () => ({ q: '10/2026' }), ['Paula', 'Pedro']],
+        ['a creation range in a time zone', () => ({ createdFrom: '2026-10-28', tz: 'Asia/Tokyo' }), ['Paula', 'Pedro']],
+        ['search combined with a status', () => ({ q: 'south', status: 'BLOCKED' }), ['Mario Rossi']],
+      ])('narrows to %s with a matching total', async (_, query, names) => {
+        const pages = await walkUsers(token, { ...query(), limit: 1 });
+
+        expect(pages.flatMap((current) => current.items.map((item) => item.name)).sort()).toEqual(names);
+        expect(pages.map((current) => current.total)).toEqual([names.length, ...pages.slice(1).map(() => null)]);
+      });
+
+      it.each<[string, ListQuery]>([
+        ['another sort', { sort: 'email' }],
+        ['another order', { order: 'asc' }],
+      ])('rejects a cursor issued for %s as INVALID_CURSOR', async (_, other) => {
+        const first = userPageSchema.parse((await listUsers(token, { limit: 2 }).expect(200)).body);
+
+        const response = await listUsers(token, { limit: 2, ...other, cursor: first.nextCursor ?? '' }).expect(400);
+
+        expect(userErrorCode(response.body)).toBe('INVALID_CURSOR');
+      });
     });
 
     it('filters by status and paginates within the filter', async () => {
@@ -751,7 +823,19 @@ describe('users', () => {
       } satisfies UserError);
     });
 
-    it.each<Record<string, string | number>>([{ status: 'UNKNOWN' }, { limit: 0 }, { limit: 101 }, { cursor: 'nope' }])(
+    it.each<ListQuery>([
+      { status: 'UNKNOWN' },
+      { status: ['ACTIVE', 'UNKNOWN'] },
+      { roleId: 'not-a-uuid' },
+      { sort: 'password' },
+      { order: 'sideways' },
+      { limit: 0 },
+      { limit: 101 },
+      { cursor: 'not a cursor!' },
+      { tz: 'Mars/Olympus' },
+      { createdFrom: '2026-02-30' },
+      { createdFrom: '2026-03-02', createdTo: '2026-03-01' },
+    ])(
       'rejects the query %o',
       async (query) => {
         const governor = await seedGovernor();

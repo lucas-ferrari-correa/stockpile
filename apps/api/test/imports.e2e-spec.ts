@@ -289,6 +289,17 @@ describe('imports', () => {
     return importId;
   }
 
+  async function settledJob(importId: string): Promise<{ state: string; attemptsMade: number | undefined }> {
+    return waitFor(
+      async () => {
+        const state = await queue.getJobState(importId);
+        const job = await queue.getJob(importId);
+        return { state, attemptsMade: job?.attemptsMade };
+      },
+      ({ state }) => state === 'completed' || state === 'failed',
+    );
+  }
+
   function reconcileLater(): Promise<ImportRecoverySummary> {
     return app.get(ImportRecoveryService).reconcile(new Date(Date.now() + 2 * RECONCILE_AFTER_MS));
   }
@@ -677,9 +688,7 @@ describe('imports', () => {
           select: { failureReason: true },
         });
         expect(row.failureReason).toBe('Simulated read failure');
-        const job = await queue.getJob(importId);
-        expect(job?.attemptsMade).toBe(JOB_ATTEMPTS);
-        expect(await job?.getState()).toBe('failed');
+        expect(await settledJob(importId)).toEqual({ state: 'failed', attemptsMade: JOB_ATTEMPTS });
         expect(await waitFor(harness.uploadedFiles, (files) => files.length === 0)).toEqual([]);
       } finally {
         processor.worker.off('failed', onFailed);
@@ -840,7 +849,7 @@ describe('imports', () => {
       expect(await harness.waitForTerminal(second)).toBe('completed');
       expect(afterFailure).toEqual(before);
       expect(stagedAfterFailure).toBeGreaterThanOrEqual(BATCH_SIZE);
-      expect((await queue.getJob(second))?.attemptsMade).toBe(2);
+      expect(await settledJob(second)).toEqual({ state: 'completed', attemptsMade: 2 });
       expect(await detail(second, user.token)).toMatchObject({
         totalRows: 21,
         acceptedRows: 21,
@@ -1008,9 +1017,7 @@ describe('imports', () => {
 
       expect(status).toBe('failed');
       expect((await failureOf(importId)).failureReason).toMatch(/^INVALID_HEADER: /);
-      const job = await queue.getJob(importId);
-      expect(job?.attemptsMade).toBe(1);
-      expect(await job?.getState()).toBe('failed');
+      expect(await settledJob(importId)).toEqual({ state: 'failed', attemptsMade: 1 });
       expect(await prisma.importStagedRow.count()).toBe(0);
       expect(await prisma.importError.count({ where: { importId } })).toBe(0);
       expect(await detail(importId, user.token)).toMatchObject({ totalRows: null, processedRows: 0, itemCount: 0 });
@@ -1123,8 +1130,8 @@ describe('imports', () => {
     it('replaces a finished job retained under the same id when requeueing', async () => {
       const user = await seedUser();
       const importId = await harness.importFile(user.token, { content: csvRows(2), name: 'products.csv' });
+      expect((await settledJob(importId)).state).toBe('completed');
       const finishedJob = await queue.getJob(importId);
-      expect(await finishedJob?.getState()).toBe('completed');
       const { filePath } = await prisma.import.findUniqueOrThrow({ where: { id: importId }, select: { filePath: true } });
       if (filePath === null) {
         throw new Error('Import without a stored file path');

@@ -163,7 +163,7 @@ describe('roles', () => {
 
       const role = roleSchema.parse(created.body);
       expect(role).toMatchObject({ name: 'Auditor', system: false });
-      expect(sorted(role.permissions)).toEqual(['dashboard:view', 'inventory:read']);
+      expect(role.permissions).toEqual(['dashboard:view', 'inventory:read']);
       expect(await roleRow(role.id)).toEqual({ name: 'Auditor', permissions: ['dashboard:view', 'inventory:read'] });
 
       const fetched = await getRole(role.id, token).expect(200);
@@ -177,11 +177,11 @@ describe('roles', () => {
       expect(items.map((item) => item.name)).toEqual(['admin', 'Auditor', expect.stringMatching(/^custom-/), 'viewer']);
       expect(items.find((item) => item.id === role.id)).toEqual({ ...role, userCount: 2 });
       expect(items.find((item) => item.id === adminRoleId)).toMatchObject({ system: true, userCount: 0 });
-      expect(sorted(items.find((item) => item.id === adminRoleId)?.permissions ?? [])).toEqual(sorted(PERMISSIONS));
+      expect(items.find((item) => item.id === adminRoleId)?.permissions).toEqual(sorted(PERMISSIONS));
 
       const renamed = await updateRole(role.id, { name: 'Inventory auditor' }, token).expect(200);
       expect(roleSchema.parse(renamed.body)).toMatchObject({ id: role.id, name: 'Inventory auditor' });
-      expect(sorted(roleSchema.parse(renamed.body).permissions)).toEqual(['dashboard:view', 'inventory:read']);
+      expect(roleSchema.parse(renamed.body).permissions).toEqual(['dashboard:view', 'inventory:read']);
 
       const repermissioned = await updateRole(role.id, { permissions: ['inventory:write'] }, token).expect(200);
       expect(roleSchema.parse(repermissioned.body)).toMatchObject({
